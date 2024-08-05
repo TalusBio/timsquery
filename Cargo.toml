@@ -1,0 +1,21 @@
+[package]
+name = "timsquery"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# timsrust = "=0.3.0"
+timsrust = { git = "https://github.com/MannLabs/timsrust.git", rev = "266fa86b206a2998e61e6c0acce23953864dbc9e" }
+rayon = "1.5"
+serde = { version = "1.0.204", features = ["derive"] }
+itertools = "0.13.0"
+serde_json = "1.0.122"
+rand = "0.8.5"
+rand_chacha = "0.3.1"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "benchmark_indices"
+harness = false
