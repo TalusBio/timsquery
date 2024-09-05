@@ -1,4 +1,4 @@
-use timsrust::ms_data::{Frame, QuadrupoleSettings};
+use timsrust::{Frame, QuadrupoleSettings};
 
 use super::raw_peak::RawPeak;
 

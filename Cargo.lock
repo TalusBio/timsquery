@@ -1184,10 +1184,10 @@ dependencies = [
 [[package]]
 name = "timsrust"
 version = "0.4.0"
-source = "git+https://github.com/MannLabs/timsrust.git?rev=266fa86b206a2998e61e6c0acce23953864dbc9e#266fa86b206a2998e61e6c0acce23953864dbc9e"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a4988de546f68c9b7cb8946e824be07091848bf02af0e4277dc5a5e4ba8b464"
 dependencies = [
  "bytemuck",
- "byteorder",
  "linreg",
  "memmap2",
  "parquet",

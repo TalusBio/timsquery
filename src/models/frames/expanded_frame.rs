@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use timsrust::ms_data::{AcquisitionType, Frame, MSLevel, QuadrupoleSettings};
+use timsrust::{AcquisitionType, Frame, MSLevel, QuadrupoleSettings};
 
 use crate::sort_by_indices_multi;
 use crate::utils::sorting::argsort_by;

@@ -5,7 +5,8 @@ edition = "2021"
 
 [dependencies]
 # timsrust = "=0.3.0"
-timsrust = { git = "https://github.com/MannLabs/timsrust.git", rev = "266fa86b206a2998e61e6c0acce23953864dbc9e" }
+# timsrust = { git = "https://github.com/MannLabs/timsrust.git", rev = "266fa86b206a2998e61e6c0acce23953864dbc9e" }
+timsrust = "0.4.0"
 rayon = "1.5"
 serde = { version = "1.0.204", features = ["derive"] }
 itertools = "0.13.0"

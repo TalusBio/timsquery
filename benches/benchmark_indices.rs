@@ -5,7 +5,7 @@ use rand_chacha::ChaCha8Rng;
 use std::hint::black_box;
 use timsquery::{
     models::{
-        indices::raw_file_index::{RawFileIndex, RawPeak, RawPeakIntensityAggregator},
+        indices::raw_file_index::{RawFileIndex, RawPeakIntensityAggregator},
         queries::{
             FragmentGroupIndexQuery, NaturalFragmentQuery, NaturalPrecursorQuery,
             PrecursorIndexQuery,

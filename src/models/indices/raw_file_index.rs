@@ -3,12 +3,12 @@ use std::process::Output;
 use std::sync::Arc;
 
 use rayon::iter::ParallelIterator;
-use timsrust::domain_converters::ConvertableDomain;
-use timsrust::io::readers::{
+use timsrust::converters::ConvertableDomain;
+use timsrust::readers::{
     FrameReader, FrameReaderError, MetadataReader, QuadrupoleSettingsReader,
 };
-use timsrust::ms_data::{Frame, Metadata, QuadrupoleSettings};
-use timsrust::Error as TimsRustError;
+use timsrust::TimsRustError;
+use timsrust::{Frame, Metadata, QuadrupoleSettings};
 // use timsrust::io::;
 
 use crate::models::frames::raw_frames::frame_elems_matching;
