@@ -5,6 +5,8 @@ use crate::utils::compress_explode::{compress_vec, explode_vec};
 use crate::utils::sorting::argsort_by;
 use core::panic;
 use std::collections::{HashMap, HashSet};
+use timsrust::readers::{FrameReader, MetadataReader};
+use timsrust::TimsRustError;
 use timsrust::{Frame, QuadrupoleSettings};
 
 struct QuadSplittedTransposedIndex {
@@ -23,7 +25,6 @@ impl QuadSplittedTransposedIndexBuilder {
     }
 
     fn add_frame(&mut self, frame: Frame) {
-        let frame_index = frame.index;
         let expanded_quad_settings = expand_quad_settings(&frame.quadrupole_settings);
 
         for qs in expanded_quad_settings {
@@ -35,6 +36,20 @@ impl QuadSplittedTransposedIndexBuilder {
             }
         }
     }
+
+    pub fn from_path(path: &str) -> Result<Self, TimsRustError> {
+        let file_reader = FrameReader::new(&path)?;
+
+        let sql_path = std::path::Path::new(path).join("analysis.tdf");
+        let meta_converters = MetadataReader::new(&sql_path)?;
+
+        let mut out = Self::new();
+        for frame in file_reader.get_all() {
+            let frame = frame?;
+            out.add_frame(frame);
+        }
+        Ok(out)
+    }
 }
 
 struct TransposedQuadIndex {
@@ -45,6 +60,83 @@ struct TransposedQuadIndex {
     // Conservatvely ... 30_000_000 elements can be layed out in a vec.
     // 638425 is the max observed val for a tof index ... So we dont need an
     // additional bucketing.
+}
+
+struct PeakInQuad {
+    scan_index: usize,
+    intensity: u32,
+    frame_index: usize,
+    tof_index: u32,
+}
+
+impl PeakInQuad {
+    pub fn from_peak_in_bucket(peak_in_bucket: PeakInBucket, tof_index: u32) -> Self {
+        Self {
+            scan_index: peak_in_bucket.scan_index,
+            intensity: peak_in_bucket.intensity,
+            frame_index: peak_in_bucket.local_frame_index as usize,
+            tof_index,
+        }
+    }
+}
+
+impl TransposedQuadIndex {
+    pub fn query_peaks(
+        &self,
+        tof_range: (u32, u32),
+        scan_range: Option<(usize, usize)>,
+        rt_range: Option<(f64, f64)>,
+        // ) -> Vec<PeakInQuad> {
+    ) -> impl Iterator<Item = PeakInQuad> + '_ {
+        let frame_index_range: Option<(usize, usize)> = match rt_range {
+            Some((rt_low, rt_high)) => {
+                let frame_id_start = match self
+                    .frame_index_rt_pairs
+                    .binary_search_by(|x| x.1.partial_cmp(&rt_low).unwrap())
+                {
+                    Ok(x) => self.frame_index_rt_pairs[x].0,
+                    Err(x) => self.frame_index_rt_pairs[x].0,
+                };
+                let frame_id_end = match self
+                    .frame_index_rt_pairs
+                    .binary_search_by(|x| x.1.partial_cmp(&rt_high).unwrap())
+                {
+                    Ok(x) => self.frame_index_rt_pairs[x].0,
+                    Err(x) => self.frame_index_rt_pairs[x].0,
+                };
+                Some((frame_id_start, frame_id_end))
+            }
+            None => None,
+        };
+
+        // TODO reimplement as an iterator ...
+        // This version is not compatible with the borrow checker unless I collect the vec...
+        // which will do for now for prototyping.
+
+        // Coult I just return an Arc<[intensities]> + ...
+        (tof_range.0..tof_range.1)
+            .filter(|tof_index| self.peak_buckets[*tof_index as usize].is_some())
+            .map(move |tof_index| {
+                self.peak_buckets[tof_index as usize]
+                    .as_ref()
+                    .unwrap()
+                    .query_peaks(scan_range)
+                    .filter(|p| match frame_index_range {
+                        Some((frame_id_start, frame_id_end)) => {
+                            p.local_frame_index >= frame_id_start as u32
+                                && p.local_frame_index < frame_id_end as u32
+                        }
+                        None => true,
+                    })
+                    .map(|p| PeakInQuad::from_peak_in_bucket(p, tof_index.clone()))
+                    .collect::<Vec<PeakInQuad>>()
+            })
+            .flatten()
+    }
+
+    pub fn query_tof_index(&self, tof_index: u32) -> Option<&PeakBucket> {
+        self.peak_buckets[tof_index as usize].as_ref()
+    }
 }
 
 struct TransposedQuadIndexBuilder {
@@ -129,10 +221,53 @@ impl TransposedQuadIndexBuilder {
     }
 }
 
+struct PeakInBucket {
+    scan_index: usize,
+    intensity: u32,
+    local_frame_index: u32,
+}
+
+#[derive(Debug)]
 struct PeakBucket {
     intensities: Vec<u32>,
     local_frame_indices: Vec<u32>,
     scan_offsets: Vec<usize>,
+}
+
+impl PeakBucket {
+    pub fn len(&self) -> usize {
+        self.intensities.len()
+    }
+
+    pub fn query_peaks(
+        &self,
+        scan_range: Option<(usize, usize)>,
+    ) -> impl Iterator<Item = PeakInBucket> + '_ {
+        let scan_range = match scan_range {
+            Some((scan_low, scan_high)) => (scan_low..scan_high).into_iter(),
+            None => 0..self.len(),
+        };
+
+        let tmp = scan_range
+            .map(move |scan_index| {
+                let peak_index_start = self.scan_offsets[scan_index];
+                let peak_index_end = self.scan_offsets[scan_index + 1];
+
+                (peak_index_start..peak_index_end)
+                    .into_iter()
+                    .map(move |peak_index| {
+                        let local_frame_index = self.local_frame_indices[peak_index];
+                        let intensity = self.intensities[peak_index];
+                        PeakInBucket {
+                            scan_index,
+                            intensity,
+                            local_frame_index,
+                        }
+                    })
+            })
+            .flatten();
+        tmp
+    }
 }
 
 struct PeakBucketBuilder {
