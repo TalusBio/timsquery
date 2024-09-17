@@ -2,18 +2,53 @@ use crate::models::frames::single_quad_settings::expand_quad_settings;
 use crate::models::frames::single_quad_settings::SingleQuadrupoleSetting;
 use crate::sort_by_indices_multi;
 use crate::utils::compress_explode::{compress_vec, explode_vec};
+use crate::utils::display::glimpse_vec;
 use crate::utils::sorting::argsort_by;
+use core::num;
 use core::panic;
+use log::{debug, info};
 use std::collections::{HashMap, HashSet};
+use std::fmt::Display;
 use timsrust::readers::{FrameReader, MetadataReader};
 use timsrust::TimsRustError;
 use timsrust::{Frame, QuadrupoleSettings};
 
-struct QuadSplittedTransposedIndex {
+pub struct QuadSplittedTransposedIndex {
     indices: HashMap<SingleQuadrupoleSetting, TransposedQuadIndex>,
 }
 
-struct QuadSplittedTransposedIndexBuilder {
+impl Display for QuadSplittedTransposedIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut disp_str = String::new();
+        disp_str.push_str("QuadSplittedTransposedIndex\n");
+        let mut num_shown = 0;
+        for (qs, tqi) in self.indices.iter() {
+            disp_str.push_str(&format!(" - {}: \n", qs));
+            disp_str.push_str(&format!(" -- {}\n", tqi));
+            num_shown += 1;
+            if num_shown > 5 {
+                disp_str.push_str(&format!(" ........ len = {}\n", self.indices.len()));
+                break;
+            }
+        }
+
+        write!(f, "{}", disp_str)
+    }
+}
+
+impl QuadSplittedTransposedIndex {
+    pub fn from_path(path: &str) -> Result<Self, TimsRustError> {
+        // 11.305 s on a normal file in my pc ... rlly not bad
+        info!("Building transposed quad index from path {}", path);
+        let tmp = QuadSplittedTransposedIndexBuilder::from_path(path)?;
+        let out = tmp.build();
+        info!("Transposed quad index built");
+        debug!("{}", out);
+        Ok(out)
+    }
+}
+
+pub struct QuadSplittedTransposedIndexBuilder {
     indices: HashMap<SingleQuadrupoleSetting, TransposedQuadIndexBuilder>,
 }
 
@@ -28,16 +63,26 @@ impl QuadSplittedTransposedIndexBuilder {
         let expanded_quad_settings = expand_quad_settings(&frame.quadrupole_settings);
 
         for qs in expanded_quad_settings {
-            if self.indices.contains_key(&qs) {
-                self.indices
-                    .get_mut(&qs)
-                    .unwrap()
-                    .add_frame_slice(&frame, (qs.ranges.scan_start, qs.ranges.scan_end));
+            // Add key if it doesnt exist ...
+            if !self.indices.contains_key(&qs) {
+                let max_tof = frame.tof_indices.iter().max().unwrap();
+                info!(
+                    "Adding new transposed quad index for qs {:?} with max tof {}",
+                    qs, max_tof
+                );
+                self.indices.insert(
+                    qs,
+                    TransposedQuadIndexBuilder::new(qs.clone(), *max_tof as usize),
+                );
             }
+            self.indices
+                .get_mut(&qs)
+                .unwrap()
+                .add_frame_slice(&frame, (qs.ranges.scan_start, qs.ranges.scan_end));
         }
     }
 
-    pub fn from_path(path: &str) -> Result<Self, TimsRustError> {
+    fn from_path(path: &str) -> Result<Self, TimsRustError> {
         let file_reader = FrameReader::new(&path)?;
 
         let sql_path = std::path::Path::new(path).join("analysis.tdf");
@@ -50,8 +95,19 @@ impl QuadSplittedTransposedIndexBuilder {
         }
         Ok(out)
     }
+
+    fn build(self) -> QuadSplittedTransposedIndex {
+        let mut out = QuadSplittedTransposedIndex {
+            indices: HashMap::new(),
+        };
+        for (qs, builder) in self.indices {
+            out.indices.insert(qs, builder.build());
+        }
+        out
+    }
 }
 
+#[derive(Debug)]
 struct TransposedQuadIndex {
     quad_settings: SingleQuadrupoleSetting,
     frame_index_rt_pairs: Vec<(usize, f64)>,
@@ -60,6 +116,53 @@ struct TransposedQuadIndex {
     // Conservatvely ... 30_000_000 elements can be layed out in a vec.
     // 638425 is the max observed val for a tof index ... So we dont need an
     // additional bucketing.
+
+    // In some of my data a lot of the buckets are empty.
+    // I could maybe use a sparse representation ... btree? hashmap?
+    // num_none: 511271, num_some: 127161
+}
+
+fn display_opt_peak_bucket(opt_peak_bucket: &Option<PeakBucket>) -> String {
+    match opt_peak_bucket {
+        Some(peak_bucket) => format!("{}", peak_bucket),
+        None => "None".to_string(),
+    }
+}
+
+fn display_opt_peak_bucket_vec(opt_peak_buckets: &[Option<PeakBucket>]) -> String {
+    let mut out = String::new();
+    let num_none = opt_peak_buckets.iter().filter(|x| x.is_none()).count();
+    let num_some = opt_peak_buckets.iter().filter(|x| x.is_some()).count();
+
+    out.push_str(&format!(
+        "PeakBuckets: num_none: {}, num_some: {}\n",
+        num_none, num_some
+    ));
+    for (i, opt_peak_bucket) in opt_peak_buckets.iter().enumerate() {
+        out.push_str(&format!(
+            " - {}: {}\n",
+            i,
+            display_opt_peak_bucket(opt_peak_bucket)
+        ));
+        if i > 3 {
+            out.push_str(&format!(" - ... len = {}\n", opt_peak_buckets.len()));
+            break;
+        }
+    }
+
+    out
+}
+
+impl Display for TransposedQuadIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "TransposedQuadIndex\n quad_settings: {}\n frame_index_rt_pairs: {}\n peak_buckets: {}\n",
+            self.quad_settings,
+            glimpse_vec(&self.frame_index_rt_pairs),
+            display_opt_peak_bucket_vec(&self.peak_buckets),
+        )
+    }
 }
 
 struct PeakInQuad {
@@ -193,9 +296,11 @@ impl TransposedQuadIndexBuilder {
     }
 
     fn add_peak(&mut self, tof_index: u32, scan_index: usize, intensity: u32, frame_index: usize) {
+        while self.peak_bucket_builders.len() <= tof_index as usize {
+            self.peak_bucket_builders.push(None);
+        }
         if self.peak_bucket_builders[tof_index as usize].is_none() {
-            self.peak_bucket_builders[tof_index as usize] =
-                Some(PeakBucketBuilder::new(tof_index as usize));
+            self.peak_bucket_builders[tof_index as usize] = Some(PeakBucketBuilder::new(20));
         }
         self.peak_bucket_builders[tof_index as usize]
             .as_mut()
@@ -232,6 +337,19 @@ struct PeakBucket {
     intensities: Vec<u32>,
     local_frame_indices: Vec<u32>,
     scan_offsets: Vec<usize>,
+}
+
+impl Display for PeakBucket {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "PeakBucket: len={}, local_frame_indices={}, scan_offsets={}, intensities={}",
+            self.len(),
+            glimpse_vec(&self.local_frame_indices),
+            glimpse_vec(&self.scan_offsets),
+            glimpse_vec(&self.intensities)
+        )
+    }
 }
 
 impl PeakBucket {

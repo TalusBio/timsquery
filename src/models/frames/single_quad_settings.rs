@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::hash::Hash;
 use std::sync::Arc;
 
@@ -12,6 +13,12 @@ pub struct SingleQuadrupoleSettingIndex {
     pub sub_index: usize,
 }
 
+impl Display for SingleQuadrupoleSettingIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct SingleQuadrupoleSettingRanges {
     pub scan_start: usize,
@@ -23,10 +30,30 @@ pub struct SingleQuadrupoleSettingRanges {
     pub collision_energy: f64,
 }
 
+impl Display for SingleQuadrupoleSettingRanges {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "SingleQuadrupoleSettingRanges {{ scan_start: {}, scan_end: {}, isolation_mz: {}, isolation_width: {}, isolation_high: {}, isolation_low: {}, collision_energy: {} }}",
+            self.scan_start, self.scan_end, self.isolation_mz, self.isolation_width, self.isolation_high, self.isolation_low, self.collision_energy
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct SingleQuadrupoleSetting {
     pub index: SingleQuadrupoleSettingIndex,
     pub ranges: SingleQuadrupoleSettingRanges,
+}
+
+impl Display for SingleQuadrupoleSetting {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "SingleQuadrupoleSetting {{\n index: {},\n ranges: {}\n }}",
+            self.index, self.ranges
+        )
+    }
 }
 
 impl Hash for SingleQuadrupoleSetting {

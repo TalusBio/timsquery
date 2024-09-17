@@ -5,7 +5,10 @@ use rand_chacha::ChaCha8Rng;
 use std::hint::black_box;
 use timsquery::{
     models::{
-        indices::raw_file_index::{RawFileIndex, RawPeakIntensityAggregator},
+        indices::{
+            raw_file_index::{RawFileIndex, RawPeakIntensityAggregator},
+            transposed_quad_index::QuadSplittedTransposedIndex,
+        },
         queries::{
             FragmentGroupIndexQuery, NaturalFragmentQuery, NaturalPrecursorQuery,
             PrecursorIndexQuery,
@@ -78,8 +81,12 @@ fn build_elution_groups(raw_file_path: String) -> Vec<ElutionGroup> {
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
+    env_logger::init();
+
     let (raw_file_path, basename) = get_file_from_env();
     let mut group = c.benchmark_group("Encoding Time");
+
+    group.sample_size(10);
     group.bench_function(BenchmarkId::new("RawFileIndex", basename.clone()), |b| {
         b.iter_batched(
             || {},
@@ -87,6 +94,19 @@ fn criterion_benchmark(c: &mut Criterion) {
             BatchSize::SmallInput,
         )
     });
+    group.bench_function(
+        BenchmarkId::new("TransposedQuadIndex", basename.clone()),
+        |b| {
+            b.iter_batched(
+                || {},
+                |()| {
+                    QuadSplittedTransposedIndex::from_path(&black_box(raw_file_path.clone()))
+                        .unwrap()
+                },
+                BatchSize::SmallInput,
+            )
+        },
+    );
 
     group.finish();
 }
