@@ -8,5 +8,5 @@ pub struct ElutionGroup {
     pub precursor_mz: f64,
     pub precursor_charge: u8,
     pub fragment_mzs: Option<Vec<f64>>,
-    pub fragment_charges: Option<Vec<i8>>,
+    pub fragment_charges: Option<Vec<u8>>,
 }

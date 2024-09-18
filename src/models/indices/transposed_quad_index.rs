@@ -12,6 +12,10 @@ use crate::ToleranceAdapter;
 use core::num;
 use core::panic;
 use log::{debug, info};
+use rayon::iter::IntoParallelIterator;
+
+use rayon::prelude::*;
+
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use std::sync::Arc;
@@ -374,8 +378,7 @@ impl TransposedQuadIndex {
                     .as_ref()
                     .unwrap()
                     .query_peaks(scan_range, frame_index_range)
-                    .map(|p| PeakInQuad::from_peak_in_bucket(p, tof_index.clone()))
-                    .collect::<Vec<PeakInQuad>>()
+                    .map(move |p| PeakInQuad::from_peak_in_bucket(p, tof_index.clone()))
             })
             .flatten()
     }
@@ -673,7 +676,6 @@ impl From<PeakInQuad> for RawPeak {
 
 impl IndexedData<FragmentGroupIndexQuery, RawPeak> for QuadSplittedTransposedIndex {
     fn query(&self, fragment_query: &FragmentGroupIndexQuery) -> Option<Vec<RawPeak>> {
-        let mut out = Vec::new();
         let precursor_mz_range = (
             fragment_query.precursor_query.isolation_mz_range.0 as f64,
             fragment_query.precursor_query.isolation_mz_range.0 as f64,
@@ -683,10 +685,27 @@ impl IndexedData<FragmentGroupIndexQuery, RawPeak> for QuadSplittedTransposedInd
             fragment_query.precursor_query.frame_index_range,
         ));
 
-        for tof_range in fragment_query.mz_index_ranges.clone().into_iter() {
-            self.query_peaks(tof_range, precursor_mz_range, scan_range, frame_index_range)
-                .for_each(|peak| out.push(RawPeak::from(peak)));
-        }
+        let out = fragment_query
+            .mz_index_ranges
+            .par_iter()
+            .map(|tof_range| {
+                self.query_peaks(
+                    *tof_range,
+                    precursor_mz_range,
+                    scan_range,
+                    frame_index_range,
+                )
+                .map(|peak| RawPeak::from(peak))
+                .collect::<Vec<RawPeak>>()
+            })
+            .flatten()
+            .collect();
+
+        // let mut out = Vec::new();
+        // for tof_range in fragment_query.mz_index_ranges.clone().into_iter() {
+        //     self.query_peaks(tof_range, precursor_mz_range, scan_range, frame_index_range)
+        //         .for_each(|peak| out.push(RawPeak::from(peak)));
+        // }
         Some(out)
     }
 
@@ -704,10 +723,29 @@ impl IndexedData<FragmentGroupIndexQuery, RawPeak> for QuadSplittedTransposedInd
             fragment_query.precursor_query.frame_index_range,
         ));
 
-        for tof_range in fragment_query.mz_index_ranges.clone().into_iter() {
-            self.query_peaks(tof_range, precursor_mz_range, scan_range, frame_index_range)
-                .for_each(|peak| aggregator.add(&RawPeak::from(peak)));
-        }
+        // for tof_range in fragment_query.mz_index_ranges.clone().into_iter() {
+        //     self.query_peaks(tof_range, precursor_mz_range, scan_range, frame_index_range)
+        //         .for_each(|peak| aggregator.add(&RawPeak::from(peak)));
+        // }
+
+        fragment_query
+            .mz_index_ranges
+            .par_iter()
+            .map(|tof_range| {
+                let mut out = Vec::new();
+                self.query_peaks(
+                    *tof_range,
+                    precursor_mz_range,
+                    scan_range,
+                    frame_index_range,
+                )
+                .for_each(|peak| out.push(RawPeak::from(peak)));
+                out
+            })
+            .flatten()
+            .collect::<Vec<RawPeak>>()
+            .into_iter()
+            .for_each(|x| aggregator.add(&x));
     }
 
     fn add_query_multi_group<O, AG: crate::Aggregator<RawPeak, Output = O>>(
@@ -715,19 +753,24 @@ impl IndexedData<FragmentGroupIndexQuery, RawPeak> for QuadSplittedTransposedInd
         fragment_queries: &[FragmentGroupIndexQuery],
         aggregator: &mut [AG],
     ) {
-        let precursor_mz_range = (
-            fragment_queries[0].precursor_query.isolation_mz_range.0 as f64,
-            fragment_queries[0].precursor_query.isolation_mz_range.0 as f64,
-        );
-        let scan_range = Some(fragment_queries[0].precursor_query.mobility_index_range);
-        let frame_index_range = Some(FrameRTTolerance::FrameIndex(
-            fragment_queries[0].precursor_query.frame_index_range,
-        ));
+        fragment_queries
+            .par_iter()
+            .zip(aggregator.par_iter_mut())
+            .for_each(|(fragment_query, agg)| {
+                let precursor_mz_range = (
+                    fragment_query.precursor_query.isolation_mz_range.0 as f64,
+                    fragment_query.precursor_query.isolation_mz_range.0 as f64,
+                );
+                let scan_range = Some(fragment_query.precursor_query.mobility_index_range);
+                let frame_index_range = Some(FrameRTTolerance::FrameIndex(
+                    fragment_query.precursor_query.frame_index_range,
+                ));
 
-        for tof_range in fragment_queries[0].mz_index_ranges.clone().into_iter() {
-            self.query_peaks(tof_range, precursor_mz_range, scan_range, frame_index_range)
-                .for_each(|peak| aggregator[0].add(&RawPeak::from(peak)));
-        }
+                for tof_range in fragment_query.mz_index_ranges.clone().into_iter() {
+                    self.query_peaks(tof_range, precursor_mz_range, scan_range, frame_index_range)
+                        .for_each(|peak| agg.add(&RawPeak::from(peak)));
+                }
+            });
     }
 }
 

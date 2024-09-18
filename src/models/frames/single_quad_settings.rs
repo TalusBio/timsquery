@@ -64,8 +64,14 @@ impl Hash for SingleQuadrupoleSetting {
 
 impl PartialEq for SingleQuadrupoleSetting {
     fn eq(&self, other: &Self) -> bool {
-        if cfg!(debug_assertions) {
-            debug_assert!(self.ranges.scan_start == other.ranges.scan_start);
+        let out = self.index == other.index;
+        if out && cfg!(debug_assertions) {
+            debug_assert!(
+                self.ranges.scan_start == other.ranges.scan_start,
+                "{:?} != {:?} in scan_start",
+                self.ranges.scan_start,
+                other.ranges.scan_start
+            );
             debug_assert!(self.ranges.scan_end == other.ranges.scan_end);
             debug_assert!(self.ranges.isolation_mz == other.ranges.isolation_mz);
             debug_assert!(self.ranges.isolation_width == other.ranges.isolation_width);
@@ -73,7 +79,7 @@ impl PartialEq for SingleQuadrupoleSetting {
             debug_assert!(self.ranges.isolation_low == other.ranges.isolation_low);
             debug_assert!(self.ranges.collision_energy == other.ranges.collision_energy);
         };
-        self.index == other.index
+        out
     }
 }
 

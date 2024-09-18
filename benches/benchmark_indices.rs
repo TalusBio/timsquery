@@ -60,7 +60,8 @@ fn build_elution_groups(raw_file_path: String) -> Vec<ElutionGroup> {
 
         for _ in 0..NUM_FRAGMENTS {
             let fragment_mz = rng.gen::<f64>() * (MAX_MZ - MIN_MZ) + MIN_MZ;
-            let fragment_charge = rng.gen::<i8>() * 3 + 1;
+            // let fragment_charge = rng.gen::<u8>() * 3 + 1;
+            let fragment_charge = 1;
             fragment_mzs.push(fragment_mz);
             fragment_charges.push(fragment_charge);
         }
@@ -87,13 +88,6 @@ fn criterion_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("Encoding Time");
 
     group.sample_size(10);
-    group.bench_function(BenchmarkId::new("RawFileIndex", basename.clone()), |b| {
-        b.iter_batched(
-            || {},
-            |()| RawFileIndex::from_path(&black_box(raw_file_path.clone())).unwrap(),
-            BatchSize::SmallInput,
-        )
-    });
     group.bench_function(
         BenchmarkId::new("TransposedQuadIndex", basename.clone()),
         |b| {
@@ -107,6 +101,13 @@ fn criterion_benchmark(c: &mut Criterion) {
             )
         },
     );
+    group.bench_function(BenchmarkId::new("RawFileIndex", basename.clone()), |b| {
+        b.iter_batched(
+            || {},
+            |()| RawFileIndex::from_path(&black_box(raw_file_path.clone())).unwrap(),
+            BatchSize::SmallInput,
+        )
+    });
 
     group.finish();
 }
@@ -116,34 +117,6 @@ fn thoughput_benchmark_random(c: &mut Criterion) {
     let mut group = c.benchmark_group("RandomAccessThroughput");
     group.significance_level(0.05).sample_size(10);
     group.throughput(criterion::Throughput::Elements(NUM_ELUTION_GROUPS as u64));
-    group.bench_function(BenchmarkId::new("RawFileIndex", basename.clone()), |b| {
-        b.iter_batched(
-            || {
-                (
-                    RawFileIndex::from_path(&(raw_file_path.clone())).unwrap(),
-                    build_elution_groups(raw_file_path.clone()),
-                    DefaultTolerance::default(),
-                )
-            },
-            |(raw_file_index, query_groups, tolerance)| {
-                let aggregator_factory = |id| RawPeakIntensityAggregator { intensity: 0 };
-                let local_lambda = |elution_group: &ElutionGroup| {
-                    query_indexed(
-                        &raw_file_index,
-                        &aggregator_factory,
-                        &raw_file_index,
-                        &tolerance,
-                        &elution_group,
-                    )
-                };
-                for elution_group in query_groups {
-                    let foo = local_lambda(&elution_group);
-                    black_box((|foo| false)(foo));
-                }
-            },
-            BatchSize::PerIteration,
-        )
-    });
     group.bench_function(
         BenchmarkId::new("TransposedQuadIndex", basename.clone()),
         |b| {
@@ -175,6 +148,34 @@ fn thoughput_benchmark_random(c: &mut Criterion) {
             )
         },
     );
+    group.bench_function(BenchmarkId::new("RawFileIndex", basename.clone()), |b| {
+        b.iter_batched(
+            || {
+                (
+                    RawFileIndex::from_path(&(raw_file_path.clone())).unwrap(),
+                    build_elution_groups(raw_file_path.clone()),
+                    DefaultTolerance::default(),
+                )
+            },
+            |(raw_file_index, query_groups, tolerance)| {
+                let aggregator_factory = |id| RawPeakIntensityAggregator { intensity: 0 };
+                let local_lambda = |elution_group: &ElutionGroup| {
+                    query_indexed(
+                        &raw_file_index,
+                        &aggregator_factory,
+                        &raw_file_index,
+                        &tolerance,
+                        &elution_group,
+                    )
+                };
+                for elution_group in query_groups {
+                    let foo = local_lambda(&elution_group);
+                    black_box((|foo| false)(foo));
+                }
+            },
+            BatchSize::PerIteration,
+        )
+    });
 
     group.finish();
 }
@@ -184,6 +185,32 @@ fn thoughput_benchmark_optim(c: &mut Criterion) {
     let mut group = c.benchmark_group("BatchAccessThroughput");
     group.significance_level(0.05).sample_size(10);
     group.throughput(criterion::Throughput::Elements(NUM_ELUTION_GROUPS as u64));
+    group.bench_function(
+        BenchmarkId::new("TransposedQuadIndex", basename.clone()),
+        |b| {
+            b.iter_batched(
+                || {
+                    (
+                        QuadSplittedTransposedIndex::from_path(&(raw_file_path.clone())).unwrap(),
+                        build_elution_groups(raw_file_path.clone()),
+                        DefaultTolerance::default(),
+                    )
+                },
+                |(qst_file_index, query_groups, tolerance)| {
+                    let aggregator_factory = |id| RawPeakIntensityAggregator { intensity: 0 };
+                    let foo = query_multi_group(
+                        &qst_file_index,
+                        &qst_file_index,
+                        &tolerance,
+                        &query_groups,
+                        &aggregator_factory,
+                    );
+                    black_box((|foo| false)(foo));
+                },
+                BatchSize::PerIteration,
+            )
+        },
+    );
     group.bench_function(BenchmarkId::new("RawFileIndex", basename.clone()), |b| {
         b.iter_batched(
             || {
@@ -213,8 +240,8 @@ fn thoughput_benchmark_optim(c: &mut Criterion) {
 
 criterion_group!(
     benches,
+    thoughput_benchmark_optim,
     criterion_benchmark,
     thoughput_benchmark_random,
-    thoughput_benchmark_optim,
 );
 criterion_main!(benches);

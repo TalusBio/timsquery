@@ -15,9 +15,18 @@ rand = "0.8.5"
 rand_chacha = "0.3.1"
 log = "0.4.22"
 env_logger = "0.11.5"
+clap = { version = "4.5.17", features = ["derive"], optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+
+[features]
+clap = ["dep:clap"]
+build-binary = ["clap"]
+
+[[bin]]         
+name = "timsquery"    
+required-features = ["build-binary"]
 
 [[bench]]
 name = "benchmark_indices"
