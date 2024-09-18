@@ -5,9 +5,9 @@ use rand_chacha::ChaCha8Rng;
 use std::hint::black_box;
 use timsquery::{
     models::{
+        aggregators::RawPeakIntensityAggregator,
         indices::{
-            raw_file_index::{RawFileIndex, RawPeakIntensityAggregator},
-            transposed_quad_index::QuadSplittedTransposedIndex,
+            raw_file_index::RawFileIndex, transposed_quad_index::QuadSplittedTransposedIndex,
         },
         queries::{
             FragmentGroupIndexQuery, NaturalFragmentQuery, NaturalPrecursorQuery,
@@ -50,7 +50,7 @@ fn build_elution_groups(raw_file_path: String) -> Vec<ElutionGroup> {
     let mut out_egs: Vec<ElutionGroup> = Vec::with_capacity(NUM_ELUTION_GROUPS);
     let mut rng = ChaCha8Rng::seed_from_u64(43u64);
 
-    for i in (1..NUM_ELUTION_GROUPS) {
+    for i in 1..NUM_ELUTION_GROUPS {
         let rt = rng.gen::<f32>() * MAX_RT;
         let mobility = rng.gen::<f32>() * (MAX_MOBILITY - MIN_MOBILITY) + MIN_MOBILITY;
         let mz = rng.gen::<f64>() * (MAX_MZ - MIN_MZ) + MIN_MZ;
@@ -144,6 +144,37 @@ fn thoughput_benchmark_random(c: &mut Criterion) {
             BatchSize::PerIteration,
         )
     });
+    group.bench_function(
+        BenchmarkId::new("TransposedQuadIndex", basename.clone()),
+        |b| {
+            b.iter_batched(
+                || {
+                    (
+                        QuadSplittedTransposedIndex::from_path(&(raw_file_path.clone())).unwrap(),
+                        build_elution_groups(raw_file_path.clone()),
+                        DefaultTolerance::default(),
+                    )
+                },
+                |(qst_file_index, query_groups, tolerance)| {
+                    let aggregator_factory = |id| RawPeakIntensityAggregator { intensity: 0 };
+                    let local_lambda = |elution_group: &ElutionGroup| {
+                        query_indexed(
+                            &qst_file_index,
+                            &aggregator_factory,
+                            &qst_file_index,
+                            &tolerance,
+                            &elution_group,
+                        )
+                    };
+                    for elution_group in query_groups {
+                        let foo = local_lambda(&elution_group);
+                        black_box((|foo| false)(foo));
+                    }
+                },
+                BatchSize::PerIteration,
+            )
+        },
+    );
 
     group.finish();
 }
@@ -183,7 +214,7 @@ fn thoughput_benchmark_optim(c: &mut Criterion) {
 criterion_group!(
     benches,
     criterion_benchmark,
+    thoughput_benchmark_random,
     thoughput_benchmark_optim,
-    thoughput_benchmark_random
 );
 criterion_main!(benches);

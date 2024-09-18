@@ -4,9 +4,7 @@ use std::sync::Arc;
 
 use rayon::iter::ParallelIterator;
 use timsrust::converters::ConvertableDomain;
-use timsrust::readers::{
-    FrameReader, FrameReaderError, MetadataReader, QuadrupoleSettingsReader,
-};
+use timsrust::readers::{FrameReader, FrameReaderError, MetadataReader, QuadrupoleSettingsReader};
 use timsrust::TimsRustError;
 use timsrust::{Frame, Metadata, QuadrupoleSettings};
 // use timsrust::io::;
@@ -131,6 +129,9 @@ impl RawFileIndex {
         elution_elements: &crate::models::elution_group::ElutionGroup,
     ) -> FragmentGroupIndexQuery {
         let precursor_query = self.query_from_elution_group_impl(tol, elution_elements);
+        // TODO: change this unwrap and use explicitly the lack of fragment mzs.
+        // Does that mean its onlyt a precursor query?
+        // Why is it an option?
         let fragment_mzs = elution_elements.fragment_mzs.as_ref().unwrap();
         let mut fqs = Vec::with_capacity(fragment_mzs.len());
         for fragment in fragment_mzs {
@@ -182,25 +183,5 @@ impl ToleranceAdapter<FragmentGroupIndexQuery> for RawFileIndex {
         elution_group: &crate::models::elution_group::ElutionGroup,
     ) -> FragmentGroupIndexQuery {
         self.queries_from_elution_elements_impl(tol, elution_group)
-    }
-}
-
-pub struct RawPeakIntensityAggregator {
-    pub intensity: u64,
-}
-
-impl crate::traits::aggregator::Aggregator<RawPeak> for RawPeakIntensityAggregator {
-    type Output = u64;
-
-    fn add(&mut self, peak: &RawPeak) {
-        self.intensity += peak.intensity as u64;
-    }
-
-    fn fold(&mut self, other: Self) {
-        self.intensity += other.intensity;
-    }
-
-    fn finalize(&self) -> u64 {
-        self.intensity
     }
 }

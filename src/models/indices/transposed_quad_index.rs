@@ -1,26 +1,178 @@
+use crate::models::frames::raw_peak::RawPeak;
 use crate::models::frames::single_quad_settings::expand_quad_settings;
 use crate::models::frames::single_quad_settings::SingleQuadrupoleSetting;
+use crate::models::queries::FragmentGroupIndexQuery;
+use crate::models::queries::PrecursorIndexQuery;
 use crate::sort_by_indices_multi;
+use crate::traits::indexed_data::IndexedData;
 use crate::utils::compress_explode::{compress_vec, explode_vec};
 use crate::utils::display::glimpse_vec;
 use crate::utils::sorting::argsort_by;
+use crate::ToleranceAdapter;
 use core::num;
 use core::panic;
 use log::{debug, info};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
+use std::sync::Arc;
+use timsrust::converters::{
+    ConvertableDomain, Frame2RtConverter, Scan2ImConverter, Tof2MzConverter,
+};
 use timsrust::readers::{FrameReader, MetadataReader};
 use timsrust::TimsRustError;
 use timsrust::{Frame, QuadrupoleSettings};
 
+// TODO break this module apart ... its getting too big for my taste
+// - JSP: 2024-11-19
+
 pub struct QuadSplittedTransposedIndex {
-    indices: HashMap<SingleQuadrupoleSetting, TransposedQuadIndex>,
+    indices: HashMap<Arc<SingleQuadrupoleSetting>, TransposedQuadIndex>,
+    rt_converter: Frame2RtConverter,
+    mz_converter: Tof2MzConverter,
+    im_converter: Scan2ImConverter,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum FrameRTTolerance {
+    FrameIndex((usize, usize)),
+    Seconds((f64, f64)),
+}
+
+impl FrameRTTolerance {
+    pub fn to_frame_index_range(self, rt_converter: &Frame2RtConverter) -> FrameRTTolerance {
+        match self {
+            FrameRTTolerance::FrameIndex(_) => self,
+            FrameRTTolerance::Seconds((low, high)) => {
+                let low = rt_converter.invert(low).round() as usize;
+                let high = rt_converter.invert(high).round() as usize;
+                FrameRTTolerance::FrameIndex((low, high))
+            }
+        }
+    }
+}
+
+impl QuadSplittedTransposedIndex {
+    pub fn query_peaks(
+        &self,
+        tof_range: (u32, u32),
+        precursor_mz_range: (f64, f64),
+        scan_range: Option<(usize, usize)>,
+        rt_range: Option<FrameRTTolerance>,
+    ) -> impl Iterator<Item = PeakInQuad> + '_ {
+        let matching_quads = self.get_matching_quad_settings(precursor_mz_range, scan_range);
+        let rt_range = match rt_range {
+            Some(x) => Some(x.to_frame_index_range(&self.rt_converter)),
+            None => None,
+        };
+
+        matching_quads
+            .map(move |qs| {
+                let tqi = self.indices.get(&qs).unwrap();
+                tqi.query_peaks(tof_range, scan_range, rt_range.clone())
+            })
+            .flatten()
+    }
+
+    fn get_matching_quad_settings(
+        &self,
+        precursor_mz_range: (f64, f64),
+        scan_range: Option<(usize, usize)>,
+    ) -> impl Iterator<Item = Arc<SingleQuadrupoleSetting>> + '_ {
+        self.indices
+            .keys()
+            .filter(move |qs| {
+                (qs.ranges.isolation_low <= precursor_mz_range.1)
+                    && (precursor_mz_range.0 <= qs.ranges.isolation_high)
+            })
+            .filter(move |qs| {
+                if let Some(scan_range) = scan_range {
+                    (qs.ranges.scan_start <= scan_range.1) && (scan_range.0 <= qs.ranges.scan_end)
+                } else {
+                    true
+                }
+            })
+            .map(|x| x.clone())
+    }
+    fn queries_from_elution_elements_impl(
+        &self,
+        tol: &dyn crate::traits::tolerance::Tolerance,
+        elution_group: &crate::models::elution_group::ElutionGroup,
+    ) -> FragmentGroupIndexQuery {
+        let rt_range = tol.rt_range(elution_group.rt_seconds);
+        let mobility_range = tol.mobility_range(elution_group.mobility);
+        let precursor_mz_range = tol.mz_range(elution_group.precursor_mz);
+        let quad_range = tol.quad_range(elution_group.precursor_mz, elution_group.precursor_charge);
+
+        let mz_index_range = (
+            self.mz_converter.invert(precursor_mz_range.0) as u32,
+            self.mz_converter.invert(precursor_mz_range.1) as u32,
+        );
+        let mobility_index_range = (
+            self.im_converter.invert(mobility_range.0) as usize,
+            self.im_converter.invert(mobility_range.1) as usize,
+        );
+        let isolation_mz_range = (
+            self.mz_converter
+                .invert(precursor_mz_range.0 - quad_range.0 as f64) as f32,
+            self.mz_converter
+                .invert(precursor_mz_range.1 + quad_range.1 as f64) as f32,
+        );
+        let frame_index_range = (
+            self.rt_converter.invert(rt_range.0) as usize,
+            self.rt_converter.invert(rt_range.1) as usize,
+        );
+
+        // let frame_index_range = (
+        //     self.rt_converter.invert(elution_group.rt_seconds) as usize,
+        //     self.rt_converter.invert(elution_group.rt_seconds) as usize,
+        // );
+        // let mz_index_range = (
+        //     self.mz_converter.invert(elution_group.precursor_mz) as u32,
+        //     self.mz_converter.invert(elution_group.precursor_mz) as u32,
+        // )
+        // let mobility_index_range = (
+        //     self.im_converter.invert(elution_group.mobility) as usize,
+        //     self.im_converter.invert(elution_group.mobility) as usize,
+        // );
+        // let isolation_mz_range = (
+        //     self.mz_converter.invert(elution_group.precursor_mz - elution_group.precursor_charge as f64) as f64,
+        //     self.mz_converter.invert(elution_group.precursor_mz + elution_group.precursor_charge as f64) as f64,
+        // );
+        let precursor_query = PrecursorIndexQuery {
+            frame_index_range,
+            mz_index_range,
+            mobility_index_range,
+            isolation_mz_range,
+        };
+
+        // TODO: change this unwrap and use explicitly the lack of fragment mzs.
+        // Does that mean its onlyt a precursor query?
+        // Why is it an option?
+        let fragment_mzs = elution_group.fragment_mzs.as_ref().unwrap();
+        let mut fqs = Vec::with_capacity(fragment_mzs.len());
+        for mz_range in fragment_mzs {
+            let mz_range = tol.mz_range(*mz_range);
+            fqs.push((
+                self.mz_converter.invert(mz_range.0) as u32,
+                self.mz_converter.invert(mz_range.1) as u32,
+            ));
+        }
+
+        FragmentGroupIndexQuery {
+            mz_index_ranges: fqs,
+            precursor_query,
+        }
+    }
 }
 
 impl Display for QuadSplittedTransposedIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut disp_str = String::new();
         disp_str.push_str("QuadSplittedTransposedIndex\n");
+
+        disp_str.push_str(&format!("rt_converter: ... not showing ...\n",));
+        disp_str.push_str(&format!("mz_converter: {:?}\n", self.mz_converter));
+        disp_str.push_str(&format!("im_converter: {:?}\n", self.im_converter));
         let mut num_shown = 0;
         for (qs, tqi) in self.indices.iter() {
             disp_str.push_str(&format!(" - {}: \n", qs));
@@ -50,15 +202,12 @@ impl QuadSplittedTransposedIndex {
 
 pub struct QuadSplittedTransposedIndexBuilder {
     indices: HashMap<SingleQuadrupoleSetting, TransposedQuadIndexBuilder>,
+    rt_converter: Frame2RtConverter,
+    mz_converter: Tof2MzConverter,
+    im_converter: Scan2ImConverter,
 }
 
 impl QuadSplittedTransposedIndexBuilder {
-    fn new() -> Self {
-        Self {
-            indices: HashMap::new(),
-        }
-    }
-
     fn add_frame(&mut self, frame: Frame) {
         let expanded_quad_settings = expand_quad_settings(&frame.quadrupole_settings);
 
@@ -66,7 +215,7 @@ impl QuadSplittedTransposedIndexBuilder {
             // Add key if it doesnt exist ...
             if !self.indices.contains_key(&qs) {
                 let max_tof = frame.tof_indices.iter().max().unwrap();
-                info!(
+                debug!(
                     "Adding new transposed quad index for qs {:?} with max tof {}",
                     qs, max_tof
                 );
@@ -88,7 +237,12 @@ impl QuadSplittedTransposedIndexBuilder {
         let sql_path = std::path::Path::new(path).join("analysis.tdf");
         let meta_converters = MetadataReader::new(&sql_path)?;
 
-        let mut out = Self::new();
+        let mut out = Self {
+            indices: HashMap::new(),
+            rt_converter: meta_converters.rt_converter,
+            mz_converter: meta_converters.mz_converter,
+            im_converter: meta_converters.im_converter,
+        };
         for frame in file_reader.get_all() {
             let frame = frame?;
             out.add_frame(frame);
@@ -99,9 +253,12 @@ impl QuadSplittedTransposedIndexBuilder {
     fn build(self) -> QuadSplittedTransposedIndex {
         let mut out = QuadSplittedTransposedIndex {
             indices: HashMap::new(),
+            rt_converter: self.rt_converter,
+            mz_converter: self.mz_converter,
+            im_converter: self.im_converter,
         };
         for (qs, builder) in self.indices {
-            out.indices.insert(qs, builder.build());
+            out.indices.insert(Arc::new(qs), builder.build());
         }
         out
     }
@@ -134,9 +291,20 @@ fn display_opt_peak_bucket_vec(opt_peak_buckets: &[Option<PeakBucket>]) -> Strin
     let num_none = opt_peak_buckets.iter().filter(|x| x.is_none()).count();
     let num_some = opt_peak_buckets.iter().filter(|x| x.is_some()).count();
 
+    let mut max_peaks = 0;
+    let mut tof_with_max = 0;
+    for (i, opt_peak_bucket) in opt_peak_buckets.iter().enumerate() {
+        if let Some(peak_bucket) = opt_peak_bucket {
+            if max_peaks < peak_bucket.intensities.len() {
+                max_peaks = peak_bucket.intensities.len();
+                tof_with_max = i;
+            }
+        }
+    }
+
     out.push_str(&format!(
-        "PeakBuckets: num_none: {}, num_some: {}\n",
-        num_none, num_some
+        "PeakBuckets: num_none: {}, num_some: {}, max_peaks: {}, tof_with_max: {}\n",
+        num_none, num_some, max_peaks, tof_with_max
     ));
     for (i, opt_peak_bucket) in opt_peak_buckets.iter().enumerate() {
         out.push_str(&format!(
@@ -165,11 +333,12 @@ impl Display for TransposedQuadIndex {
     }
 }
 
-struct PeakInQuad {
-    scan_index: usize,
-    intensity: u32,
-    frame_index: usize,
-    tof_index: u32,
+#[derive(Debug, Clone, Copy)]
+pub struct PeakInQuad {
+    pub scan_index: usize,
+    pub intensity: u32,
+    pub frame_index: usize,
+    pub tof_index: u32,
 }
 
 impl PeakInQuad {
@@ -188,53 +357,75 @@ impl TransposedQuadIndex {
         &self,
         tof_range: (u32, u32),
         scan_range: Option<(usize, usize)>,
-        rt_range: Option<(f64, f64)>,
+        rt_range: Option<FrameRTTolerance>,
         // ) -> Vec<PeakInQuad> {
     ) -> impl Iterator<Item = PeakInQuad> + '_ {
-        let frame_index_range: Option<(usize, usize)> = match rt_range {
-            Some((rt_low, rt_high)) => {
-                let frame_id_start = match self
-                    .frame_index_rt_pairs
-                    .binary_search_by(|x| x.1.partial_cmp(&rt_low).unwrap())
-                {
-                    Ok(x) => self.frame_index_rt_pairs[x].0,
-                    Err(x) => self.frame_index_rt_pairs[x].0,
-                };
-                let frame_id_end = match self
-                    .frame_index_rt_pairs
-                    .binary_search_by(|x| x.1.partial_cmp(&rt_high).unwrap())
-                {
-                    Ok(x) => self.frame_index_rt_pairs[x].0,
-                    Err(x) => self.frame_index_rt_pairs[x].0,
-                };
-                Some((frame_id_start, frame_id_end))
-            }
-            None => None,
-        };
-
         // TODO reimplement as an iterator ...
         // This version is not compatible with the borrow checker unless I collect the vec...
         // which will do for now for prototyping.
+        let frame_index_range = self.convert_to_local_frame_range(rt_range);
 
         // Coult I just return an Arc<[intensities]> + ...
+        // If I made the peak buckets sparse, I could make it ... not be an option.
         (tof_range.0..tof_range.1)
             .filter(|tof_index| self.peak_buckets[*tof_index as usize].is_some())
             .map(move |tof_index| {
                 self.peak_buckets[tof_index as usize]
                     .as_ref()
                     .unwrap()
-                    .query_peaks(scan_range)
-                    .filter(|p| match frame_index_range {
-                        Some((frame_id_start, frame_id_end)) => {
-                            p.local_frame_index >= frame_id_start as u32
-                                && p.local_frame_index < frame_id_end as u32
-                        }
-                        None => true,
-                    })
+                    .query_peaks(scan_range, frame_index_range)
                     .map(|p| PeakInQuad::from_peak_in_bucket(p, tof_index.clone()))
                     .collect::<Vec<PeakInQuad>>()
             })
             .flatten()
+    }
+
+    fn convert_to_local_frame_range(
+        &self,
+        rt_range: Option<FrameRTTolerance>,
+    ) -> Option<(LocalFrameIndex, LocalFrameIndex)> {
+        let frame_index_range: Option<(LocalFrameIndex, LocalFrameIndex)> = match rt_range {
+            Some(FrameRTTolerance::Seconds((rt_low, rt_high))) => {
+                let frame_id_start = self
+                    .frame_index_rt_pairs
+                    .binary_search_by(|x| x.1.partial_cmp(&rt_low).unwrap())
+                    .unwrap_or_else(|x| x);
+                let frame_id_end = self
+                    .frame_index_rt_pairs
+                    .binary_search_by(|x| x.1.partial_cmp(&rt_high).unwrap())
+                    .unwrap_or_else(|x| x);
+
+                Some((
+                    frame_id_start as LocalFrameIndex,
+                    frame_id_end as LocalFrameIndex,
+                ))
+            }
+            Some(FrameRTTolerance::FrameIndex((frame_low, frame_high))) => {
+                let frame_id_start = self
+                    .frame_index_rt_pairs
+                    .binary_search_by(|x| x.0.partial_cmp(&frame_low).unwrap())
+                    .unwrap_or_else(|x| x);
+
+                let frame_id_end = self
+                    .frame_index_rt_pairs
+                    .binary_search_by(|x| x.0.partial_cmp(&frame_high).unwrap())
+                    .unwrap_or_else(|x| x);
+
+                Some((
+                    frame_id_start as LocalFrameIndex,
+                    frame_id_end as LocalFrameIndex,
+                ))
+            }
+            None => None,
+        };
+
+        if cfg!(debug_assertions) {
+            if let Some((low, high)) = frame_index_range {
+                debug_assert!(low <= high);
+            }
+        }
+
+        frame_index_range
     }
 
     pub fn query_tof_index(&self, tof_index: u32) -> Option<&PeakBucket> {
@@ -326,16 +517,18 @@ impl TransposedQuadIndexBuilder {
     }
 }
 
-struct PeakInBucket {
-    scan_index: usize,
-    intensity: u32,
-    local_frame_index: u32,
+pub struct PeakInBucket {
+    pub scan_index: usize,
+    pub intensity: u32,
+    pub local_frame_index: u32,
 }
+
+type LocalFrameIndex = u32;
 
 #[derive(Debug)]
 struct PeakBucket {
     intensities: Vec<u32>,
-    local_frame_indices: Vec<u32>,
+    local_frame_indices: Vec<LocalFrameIndex>,
     scan_offsets: Vec<usize>,
 }
 
@@ -360,6 +553,7 @@ impl PeakBucket {
     pub fn query_peaks(
         &self,
         scan_range: Option<(usize, usize)>,
+        local_index_range: Option<(LocalFrameIndex, LocalFrameIndex)>,
     ) -> impl Iterator<Item = PeakInBucket> + '_ {
         let scan_range = match scan_range {
             Some((scan_low, scan_high)) => (scan_low..scan_high).into_iter(),
@@ -382,12 +576,19 @@ impl PeakBucket {
                             local_frame_index,
                         }
                     })
+                    .filter(move |peak| match local_index_range {
+                        Some((low, high)) => {
+                            low <= peak.local_frame_index && peak.local_frame_index <= high
+                        }
+                        None => true,
+                    })
             })
             .flatten();
         tmp
     }
 }
 
+#[derive(Debug)]
 struct PeakBucketBuilder {
     intensities: Vec<u32>,
     frame_indices: Vec<usize>,
@@ -457,5 +658,85 @@ impl PeakBucket {
         }
 
         true
+    }
+}
+
+impl From<PeakInQuad> for RawPeak {
+    fn from(peak_in_quad: PeakInQuad) -> Self {
+        RawPeak {
+            scan_index: peak_in_quad.scan_index,
+            tof_index: peak_in_quad.tof_index,
+            intensity: peak_in_quad.intensity,
+        }
+    }
+}
+
+impl IndexedData<FragmentGroupIndexQuery, RawPeak> for QuadSplittedTransposedIndex {
+    fn query(&self, fragment_query: &FragmentGroupIndexQuery) -> Option<Vec<RawPeak>> {
+        let mut out = Vec::new();
+        let precursor_mz_range = (
+            fragment_query.precursor_query.isolation_mz_range.0 as f64,
+            fragment_query.precursor_query.isolation_mz_range.0 as f64,
+        );
+        let scan_range = Some(fragment_query.precursor_query.mobility_index_range);
+        let frame_index_range = Some(FrameRTTolerance::FrameIndex(
+            fragment_query.precursor_query.frame_index_range,
+        ));
+
+        for tof_range in fragment_query.mz_index_ranges.clone().into_iter() {
+            self.query_peaks(tof_range, precursor_mz_range, scan_range, frame_index_range)
+                .for_each(|peak| out.push(RawPeak::from(peak)));
+        }
+        Some(out)
+    }
+
+    fn add_query<O, AG: crate::Aggregator<RawPeak, Output = O>>(
+        &self,
+        fragment_query: &FragmentGroupIndexQuery,
+        aggregator: &mut AG,
+    ) {
+        let precursor_mz_range = (
+            fragment_query.precursor_query.isolation_mz_range.0 as f64,
+            fragment_query.precursor_query.isolation_mz_range.0 as f64,
+        );
+        let scan_range = Some(fragment_query.precursor_query.mobility_index_range);
+        let frame_index_range = Some(FrameRTTolerance::FrameIndex(
+            fragment_query.precursor_query.frame_index_range,
+        ));
+
+        for tof_range in fragment_query.mz_index_ranges.clone().into_iter() {
+            self.query_peaks(tof_range, precursor_mz_range, scan_range, frame_index_range)
+                .for_each(|peak| aggregator.add(&RawPeak::from(peak)));
+        }
+    }
+
+    fn add_query_multi_group<O, AG: crate::Aggregator<RawPeak, Output = O>>(
+        &self,
+        fragment_queries: &[FragmentGroupIndexQuery],
+        aggregator: &mut [AG],
+    ) {
+        let precursor_mz_range = (
+            fragment_queries[0].precursor_query.isolation_mz_range.0 as f64,
+            fragment_queries[0].precursor_query.isolation_mz_range.0 as f64,
+        );
+        let scan_range = Some(fragment_queries[0].precursor_query.mobility_index_range);
+        let frame_index_range = Some(FrameRTTolerance::FrameIndex(
+            fragment_queries[0].precursor_query.frame_index_range,
+        ));
+
+        for tof_range in fragment_queries[0].mz_index_ranges.clone().into_iter() {
+            self.query_peaks(tof_range, precursor_mz_range, scan_range, frame_index_range)
+                .for_each(|peak| aggregator[0].add(&RawPeak::from(peak)));
+        }
+    }
+}
+
+impl ToleranceAdapter<FragmentGroupIndexQuery> for QuadSplittedTransposedIndex {
+    fn query_from_elution_group(
+        &self,
+        tol: &dyn crate::traits::tolerance::Tolerance,
+        elution_group: &crate::models::elution_group::ElutionGroup,
+    ) -> FragmentGroupIndexQuery {
+        self.queries_from_elution_elements_impl(tol, elution_group)
     }
 }

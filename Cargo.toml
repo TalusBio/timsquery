@@ -1,6 +1,6 @@
 [package]
 name = "timsquery"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
@@ -22,3 +22,12 @@ criterion = { version = "0.5", features = ["html_reports"] }
 [[bench]]
 name = "benchmark_indices"
 harness = false
+
+
+[profile.release]
+opt-level = 3
+lto = 'fat'
+panic = 'abort'
+codegen-units = 1
+#  369.31  elem/s with 4 units/thin lto
+#  401.37  elem/s with 1 units/fat lto
