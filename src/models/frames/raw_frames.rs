@@ -1,6 +1,7 @@
 use timsrust::{Frame, QuadrupoleSettings};
 
 use super::raw_peak::RawPeak;
+use log::trace;
 
 pub fn scans_matching_quad(
     quad_settings: &QuadrupoleSettings,
@@ -35,6 +36,12 @@ pub fn frame_elems_matching<'a>(
     scan_range: (usize, usize),
     quad_range: Option<(f64, f64)>,
 ) -> impl Iterator<Item = RawPeak> + 'a {
+    trace!(
+        "frame_elems_matching tof_range: {:?}, scan_range: {:?}, quad_range: {:?}",
+        tof_range,
+        scan_range,
+        quad_range
+    );
     let quad_range = quad_range
         .and_then(|quad_range| scans_matching_quad(&frame.quadrupole_settings, quad_range));
 

@@ -106,6 +106,15 @@ impl RawFileIndex {
         let mz_range = tol.mz_range(elution_group.precursor_mz);
         let quad_range = tol.quad_range(elution_group.precursor_mz, elution_group.precursor_charge);
 
+        let mut min_scan_index =
+            self.meta_converters.rt_converter.invert(mobility_range.0) as usize;
+        let mut max_scan_index =
+            self.meta_converters.rt_converter.invert(mobility_range.1) as usize;
+
+        if min_scan_index > max_scan_index {
+            std::mem::swap(&mut min_scan_index, &mut max_scan_index);
+        }
+
         PrecursorIndexQuery {
             frame_index_range: (
                 self.meta_converters.rt_converter.invert(rt_range.0) as usize,
@@ -115,10 +124,7 @@ impl RawFileIndex {
                 self.meta_converters.mz_converter.invert(mz_range.0) as u32,
                 self.meta_converters.mz_converter.invert(mz_range.1) as u32,
             ),
-            mobility_index_range: (
-                self.meta_converters.im_converter.invert(mobility_range.0) as usize,
-                self.meta_converters.im_converter.invert(mobility_range.1) as usize,
-            ),
+            mobility_index_range: (min_scan_index, max_scan_index),
             isolation_mz_range: quad_range,
         }
     }

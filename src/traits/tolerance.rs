@@ -80,8 +80,8 @@ impl Tolerance for DefaultTolerance {
         match self.mobility {
             MobilityTolerance::Absolute((low, high)) => (mobility - low, mobility + high),
             MobilityTolerance::Pct((low, high)) => {
-                let low = mobility * low / 100.0;
-                let high = mobility * high / 100.0;
+                let low = mobility * (low / 100.0);
+                let high = mobility * (high / 100.0);
                 (mobility - low, mobility + high)
             }
         }

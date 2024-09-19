@@ -11,8 +11,8 @@ use crate::utils::sorting::argsort_by;
 use crate::ToleranceAdapter;
 use core::num;
 use core::panic;
+use log::trace;
 use log::{debug, info};
-use rayon::iter::IntoParallelIterator;
 
 use rayon::prelude::*;
 
@@ -64,6 +64,12 @@ impl QuadSplittedTransposedIndex {
         scan_range: Option<(usize, usize)>,
         rt_range: Option<FrameRTTolerance>,
     ) -> impl Iterator<Item = PeakInQuad> + '_ {
+        trace!(
+            "QuadSplittedTransposedIndex::query_peaks tof_range: {:?}, scan_range: {:?}, rt_range: {:?}",
+            tof_range,
+            scan_range,
+            rt_range,
+        );
         let matching_quads = self.get_matching_quad_settings(precursor_mz_range, scan_range);
         let rt_range = match rt_range {
             Some(x) => Some(x.to_frame_index_range(&self.rt_converter)),
@@ -126,6 +132,15 @@ impl QuadSplittedTransposedIndex {
         let frame_index_range = (
             self.rt_converter.invert(rt_range.0) as usize,
             self.rt_converter.invert(rt_range.1) as usize,
+        );
+
+        assert!(frame_index_range.0 <= frame_index_range.1);
+        assert!(mz_index_range.0 <= mz_index_range.1);
+        assert!(isolation_mz_range.0 <= isolation_mz_range.1);
+        // assert!(mobility_index_range.0 <= mobility_index_range.1);
+        let mobility_index_range = (
+            mobility_index_range.0.min(mobility_index_range.1) as usize,
+            mobility_index_range.1.max(mobility_index_range.0) as usize,
         );
 
         let precursor_query = PrecursorIndexQuery {
@@ -330,6 +345,14 @@ fn display_opt_peak_bucket_vec(opt_peak_buckets: &[Option<PeakBucket>]) -> Strin
         }
     }
 
+    if tof_with_max > 0 {
+        out.push_str(&format!(
+            " - Bucket with max tof: {} {}\n",
+            tof_with_max,
+            display_opt_peak_bucket(&opt_peak_buckets[tof_with_max as usize])
+        ));
+    }
+
     out
 }
 
@@ -372,6 +395,12 @@ impl TransposedQuadIndex {
         rt_range: Option<FrameRTTolerance>,
         // ) -> Vec<PeakInQuad> {
     ) -> impl Iterator<Item = PeakInQuad> + '_ {
+        trace!(
+            "TransposedQuadIndex::query_peaks tof_range: {:?}, scan_range: {:?}, rt_range: {:?}",
+            tof_range,
+            scan_range,
+            rt_range
+        );
         // TODO reimplement as an iterator ...
         // This version is not compatible with the borrow checker unless I collect the vec...
         // which will do for now for prototyping.
@@ -473,12 +502,18 @@ impl TransposedQuadIndexBuilder {
         let frame_index = frame.index;
         let frame_rt = frame.rt;
         self.add_frame_index_rt(frame_index, frame_rt);
-        for scan_index in scan_range.0..scan_range.1 {
-            let tof_index = frame.tof_indices[scan_index];
-            let intensity = frame.intensities[scan_index];
+        for scan_index in scan_range.0..(scan_range.1 - 1) {
+            let peak_index_start = frame.scan_offsets[scan_index];
+            let peak_index_end = frame.scan_offsets[scan_index + 1];
+
+            for peak_index in peak_index_start..peak_index_end {
+                let tof_index = frame.tof_indices[peak_index];
+                let intensity = frame.intensities[peak_index];
             self.add_peak(tof_index, scan_index, intensity, frame_index);
+            }
         }
     }
+
 
     pub fn add_frame_index_rt(&mut self, frame_index: usize, rt: f64) {
         self.num_frames += 1;
@@ -498,8 +533,10 @@ impl TransposedQuadIndexBuilder {
     }
 
     fn add_peak(&mut self, tof_index: u32, scan_index: usize, intensity: u32, frame_index: usize) {
-        while self.peak_bucket_builders.len() <= tof_index as usize {
-            self.peak_bucket_builders.push(None);
+        if self.peak_bucket_builders.len() <= (tof_index + 1) as usize {
+            let num_to_add = (tof_index as usize - self.peak_bucket_builders.len()) + 20;
+            self.peak_bucket_builders
+                .extend((0..num_to_add).map(|_| None));
         }
         if self.peak_bucket_builders[tof_index as usize].is_none() {
             self.peak_bucket_builders[tof_index as usize] = Some(PeakBucketBuilder::new(20));
@@ -539,6 +576,7 @@ type LocalFrameIndex = u32;
 #[derive(Debug)]
 struct PeakBucket {
     intensities: Vec<u32>,
+    // TODO: consider using rts instead of local_frame_indices
     local_frame_indices: Vec<LocalFrameIndex>,
     scan_offsets: Vec<usize>,
 }
@@ -547,7 +585,7 @@ impl Display for PeakBucket {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "PeakBucket: len={}, local_frame_indices={}, scan_offsets={}, intensities={}",
+            "PeakBucket: \n    len={},\n    local_frame_indices={},\n    scan_offsets={},\n    intensities={}",
             self.len(),
             glimpse_vec(
                 &self.local_frame_indices,
@@ -588,8 +626,10 @@ impl PeakBucket {
         local_index_range: Option<(LocalFrameIndex, LocalFrameIndex)>,
     ) -> impl Iterator<Item = PeakInBucket> + '_ {
         let scan_range = match scan_range {
-            Some((scan_low, scan_high)) => (scan_low..scan_high).into_iter(),
-            None => 0..self.len(),
+            Some((scan_low, scan_high)) => {
+                (scan_low.max(0)..scan_high.min(self.scan_offsets.len() - 1)).into_iter()
+            }
+            None => 0..self.scan_offsets.len(),
         };
 
         let tmp = scan_range
@@ -597,22 +637,20 @@ impl PeakBucket {
                 let peak_index_start = self.scan_offsets[scan_index];
                 let peak_index_end = self.scan_offsets[scan_index + 1];
 
-                (peak_index_start..peak_index_end)
-                    .into_iter()
-                    .map(move |peak_index| {
-                        let local_frame_index = self.local_frame_indices[peak_index];
-                        let intensity = self.intensities[peak_index];
-                        PeakInBucket {
-                            scan_index,
-                            intensity,
-                            local_frame_index,
-                        }
-                    })
-                    .filter(move |peak| match local_index_range {
-                        Some((low, high)) => {
-                            low <= peak.local_frame_index && peak.local_frame_index <= high
-                        }
+                let local_frame_slice = &self.local_frame_indices[peak_index_start..peak_index_end];
+                let intensity_slice = &self.intensities[peak_index_start..peak_index_end];
+
+                local_frame_slice
+                    .iter()
+                    .zip(intensity_slice)
+                    .filter(move |(lfi, _inten)| match local_index_range {
+                        Some((low, high)) => &low <= *lfi && *lfi <= &high,
                         None => true,
+                    })
+                    .map(move |(lfi, inten)| PeakInBucket {
+                        scan_index,
+                        intensity: *inten,
+                        local_frame_index: *lfi,
                     })
             })
             .flatten();

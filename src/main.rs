@@ -1,10 +1,6 @@
-use std::default;
-
 use timsquery::models::elution_group::ElutionGroup;
 use timsquery::queriable_tims_data::queriable_tims_data::query_multi_group;
 use timsquery::traits::tolerance::DefaultTolerance;
-use timsquery::utils::display::glimpse_vec;
-use timsquery::utils::sorting::sort_multiple_by;
 use timsquery::Aggregator;
 use timsquery::{
     models::aggregators::RawPeakIntensityAggregator, models::indices::raw_file_index::RawFileIndex,
@@ -13,7 +9,7 @@ use timsquery::{
 
 use timsquery::traits::tolerance::{MobilityTolerance, MzToleramce, QuadTolerance, RtTolerance};
 
-use clap::{Arg, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 
 // Read json with tolerance settings
@@ -25,10 +21,10 @@ use serde::{Deserialize, Serialize};
 fn template_elution_groups(num: usize) -> Vec<ElutionGroup> {
     let mut egs = Vec::with_capacity(num);
     for i in 1..num {
-        let rt = i as f32 * 10.0;
-        let mobility = i as f32 * 0.1;
-        let mz = i as f64 * 100.0;
-        let precursor_charge = i as u8;
+        let rt = 300.0 + (i as f32 * 10.0);
+        let mobility = 1.0 + (i as f32 * 0.01);
+        let mz = 1000.0 + (i as f64 * 10.0);
+        let precursor_charge = 2;
         let fragment_mzs = Some(vec![mz]);
         let fragment_charges = Some(vec![precursor_charge]);
         egs.push(ElutionGroup {
@@ -48,7 +44,7 @@ fn template_tolerance_settings() -> DefaultTolerance {
     DefaultTolerance {
         ms: MzToleramce::Ppm((20.0, 20.0)),
         rt: RtTolerance::Absolute((5.0, 5.0)),
-        mobility: MobilityTolerance::Pct((3.0, 3.0)),
+        mobility: MobilityTolerance::Pct((30.0, 30.0)),
         quad: QuadTolerance::Absolute((0.1, 0.1, 1)),
     }
 }
@@ -64,6 +60,14 @@ struct Args {
 enum PossibleAggregator {
     #[default]
     RawPeakIntensityAggregator,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
+enum PossibleIndex {
+    #[default]
+    Unspecified,
+    RawFileIndex,
+    TransposedQuadIndex,
 }
 
 #[derive(Parser, Debug)]
@@ -91,6 +95,10 @@ struct QueryIndexArgs {
     // The aggregator to use.
     #[arg(short, long, default_value_t, value_enum)]
     aggregator: PossibleAggregator,
+
+    // The index to use.
+    #[arg(short, long, value_enum)]
+    index: PossibleIndex,
 }
 
 #[derive(Parser, Debug)]
@@ -155,14 +163,15 @@ fn main_query_index(args: QueryIndexArgs) {
     let tolerance_settings_path = args.tolerance_settings_path;
     let elution_groups_path = args.elution_groups_path;
     let output_path = args.output_path;
+    let index_use = args.index;
 
     let tolerance_settings: DefaultTolerance =
         serde_json::from_str(&std::fs::read_to_string(&tolerance_settings_path).unwrap()).unwrap();
     let elution_groups: Vec<ElutionGroup> =
         serde_json::from_str(&std::fs::read_to_string(&elution_groups_path).unwrap()).unwrap();
 
-    let aggregator_factory = |id| RawPeakIntensityAggregator { intensity: 0 };
-    let foo = if elution_groups.len() > 10 {
+    let aggregator_factory = |_id| RawPeakIntensityAggregator { intensity: 0 };
+    let foo = if (elution_groups.len() > 10) || index_use == PossibleIndex::TransposedQuadIndex {
         let index = QuadSplittedTransposedIndex::from_path(&(raw_file_path.clone())).unwrap();
         query_multi_group(
             &index,

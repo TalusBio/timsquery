@@ -38,7 +38,10 @@ pub fn glimpse_vec<T: std::fmt::Debug>(v: &[T], config: Option<GlimpseConfig>) -
                 .map(|x| format!("{}{:?}{}", padding, x, separator))
                 .collect::<String>(),
         );
-        out.push_str(&format!("] len = {}", len));
+        out.push_str(&format!("{}] len = {}", padding, len));
+        if config.new_line {
+            out.push_str("\n");
+        }
     } else {
         out.push_str("[\n");
         out.push_str(
