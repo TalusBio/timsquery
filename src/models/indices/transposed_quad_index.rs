@@ -6,7 +6,7 @@ use crate::models::queries::PrecursorIndexQuery;
 use crate::sort_by_indices_multi;
 use crate::traits::indexed_data::IndexedData;
 use crate::utils::compress_explode::{compress_vec, explode_vec};
-use crate::utils::display::glimpse_vec;
+use crate::utils::display::{glimpse_vec, GlimpseConfig};
 use crate::utils::sorting::argsort_by;
 use crate::ToleranceAdapter;
 use core::num;
@@ -31,6 +31,7 @@ use timsrust::{Frame, QuadrupoleSettings};
 
 pub struct QuadSplittedTransposedIndex {
     indices: HashMap<Arc<SingleQuadrupoleSetting>, TransposedQuadIndex>,
+    flat_quad_settings: Vec<SingleQuadrupoleSetting>,
     rt_converter: Frame2RtConverter,
     mz_converter: Tof2MzConverter,
     im_converter: Scan2ImConverter,
@@ -81,9 +82,9 @@ impl QuadSplittedTransposedIndex {
         &self,
         precursor_mz_range: (f64, f64),
         scan_range: Option<(usize, usize)>,
-    ) -> impl Iterator<Item = Arc<SingleQuadrupoleSetting>> + '_ {
-        self.indices
-            .keys()
+    ) -> impl Iterator<Item = SingleQuadrupoleSetting> + '_ {
+        self.flat_quad_settings
+            .iter()
             .filter(move |qs| {
                 (qs.ranges.isolation_low <= precursor_mz_range.1)
                     && (precursor_mz_range.0 <= qs.ranges.isolation_high)
@@ -97,6 +98,7 @@ impl QuadSplittedTransposedIndex {
             })
             .map(|x| x.clone())
     }
+
     fn queries_from_elution_elements_impl(
         &self,
         tol: &dyn crate::traits::tolerance::Tolerance,
@@ -126,22 +128,6 @@ impl QuadSplittedTransposedIndex {
             self.rt_converter.invert(rt_range.1) as usize,
         );
 
-        // let frame_index_range = (
-        //     self.rt_converter.invert(elution_group.rt_seconds) as usize,
-        //     self.rt_converter.invert(elution_group.rt_seconds) as usize,
-        // );
-        // let mz_index_range = (
-        //     self.mz_converter.invert(elution_group.precursor_mz) as u32,
-        //     self.mz_converter.invert(elution_group.precursor_mz) as u32,
-        // )
-        // let mobility_index_range = (
-        //     self.im_converter.invert(elution_group.mobility) as usize,
-        //     self.im_converter.invert(elution_group.mobility) as usize,
-        // );
-        // let isolation_mz_range = (
-        //     self.mz_converter.invert(elution_group.precursor_mz - elution_group.precursor_charge as f64) as f64,
-        //     self.mz_converter.invert(elution_group.precursor_mz + elution_group.precursor_charge as f64) as f64,
-        // );
         let precursor_query = PrecursorIndexQuery {
             frame_index_range,
             mz_index_range,
@@ -177,6 +163,15 @@ impl Display for QuadSplittedTransposedIndex {
         disp_str.push_str(&format!("rt_converter: ... not showing ...\n",));
         disp_str.push_str(&format!("mz_converter: {:?}\n", self.mz_converter));
         disp_str.push_str(&format!("im_converter: {:?}\n", self.im_converter));
+        disp_str.push_str(&"flat_quad_settings: \n");
+        disp_str.push_str(&glimpse_vec(
+            &self.flat_quad_settings,
+            Some(GlimpseConfig {
+                max_items: 10,
+                padding: 4,
+                new_line: true,
+            }),
+        ));
         let mut num_shown = 0;
         for (qs, tqi) in self.indices.iter() {
             disp_str.push_str(&format!(" - {}: \n", qs));
@@ -255,15 +250,28 @@ impl QuadSplittedTransposedIndexBuilder {
     }
 
     fn build(self) -> QuadSplittedTransposedIndex {
-        let mut out = QuadSplittedTransposedIndex {
-            indices: HashMap::new(),
+        let mut indices = HashMap::new();
+        let mut flat_quad_settings = Vec::new();
+        for (qs, builder) in self.indices {
+            let tmp = Arc::new(qs);
+            indices.insert(tmp.clone(), builder.build());
+            flat_quad_settings.push(qs.clone());
+        }
+        flat_quad_settings.sort_by(|a, b| {
+            a.ranges
+                .isolation_mz
+                .partial_cmp(&b.ranges.isolation_mz)
+                .unwrap()
+        });
+
+        let out = QuadSplittedTransposedIndex {
+            indices: indices,
+            flat_quad_settings,
             rt_converter: self.rt_converter,
             mz_converter: self.mz_converter,
             im_converter: self.im_converter,
         };
-        for (qs, builder) in self.indices {
-            out.indices.insert(Arc::new(qs), builder.build());
-        }
+
         out
     }
 }
@@ -331,7 +339,7 @@ impl Display for TransposedQuadIndex {
             f,
             "TransposedQuadIndex\n quad_settings: {}\n frame_index_rt_pairs: {}\n peak_buckets: {}\n",
             self.quad_settings,
-            glimpse_vec(&self.frame_index_rt_pairs),
+            glimpse_vec(&self.frame_index_rt_pairs, Some(GlimpseConfig { max_items: 10, padding: 2, new_line: true })),
             display_opt_peak_bucket_vec(&self.peak_buckets),
         )
     }
@@ -541,9 +549,30 @@ impl Display for PeakBucket {
             f,
             "PeakBucket: len={}, local_frame_indices={}, scan_offsets={}, intensities={}",
             self.len(),
-            glimpse_vec(&self.local_frame_indices),
-            glimpse_vec(&self.scan_offsets),
-            glimpse_vec(&self.intensities)
+            glimpse_vec(
+                &self.local_frame_indices,
+                Some(GlimpseConfig {
+                    max_items: 10,
+                    padding: 2,
+                    new_line: false
+                })
+            ),
+            glimpse_vec(
+                &self.scan_offsets,
+                Some(GlimpseConfig {
+                    max_items: 10,
+                    padding: 2,
+                    new_line: false
+                })
+            ),
+            glimpse_vec(
+                &self.intensities,
+                Some(GlimpseConfig {
+                    max_items: 10,
+                    padding: 2,
+                    new_line: false
+                })
+            )
         )
     }
 }

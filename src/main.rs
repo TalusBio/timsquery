@@ -1,3 +1,5 @@
+use std::default;
+
 use timsquery::models::elution_group::ElutionGroup;
 use timsquery::queriable_tims_data::queriable_tims_data::query_multi_group;
 use timsquery::traits::tolerance::DefaultTolerance;
@@ -58,6 +60,12 @@ struct Args {
     command: Option<Commands>,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
+enum PossibleAggregator {
+    #[default]
+    RawPeakIntensityAggregator,
+}
+
 #[derive(Parser, Debug)]
 struct QueryIndexArgs {
     /// The path to the raw file to query.
@@ -79,6 +87,10 @@ struct QueryIndexArgs {
     // Whether the output json should be pretty printed.
     #[arg(short, long)]
     pretty: bool,
+
+    // The aggregator to use.
+    #[arg(short, long, default_value_t, value_enum)]
+    aggregator: PossibleAggregator,
 }
 
 #[derive(Parser, Debug)]

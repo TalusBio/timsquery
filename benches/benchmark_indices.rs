@@ -1,4 +1,7 @@
-use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
+use criterion::{
+    criterion_group, criterion_main, measurement::Measurement, BatchSize, BenchmarkFilter,
+    BenchmarkGroup, BenchmarkId, Criterion,
+};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
@@ -82,8 +85,6 @@ fn build_elution_groups(raw_file_path: String) -> Vec<ElutionGroup> {
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
-    env_logger::init();
-
     let (raw_file_path, basename) = get_file_from_env();
     let mut group = c.benchmark_group("Encoding Time");
 
@@ -112,128 +113,119 @@ fn criterion_benchmark(c: &mut Criterion) {
     group.finish();
 }
 
-fn thoughput_benchmark_random(c: &mut Criterion) {
-    let (raw_file_path, basename) = get_file_from_env();
-    let mut group = c.benchmark_group("RandomAccessThroughput");
-    group.significance_level(0.05).sample_size(10);
-    group.throughput(criterion::Throughput::Elements(NUM_ELUTION_GROUPS as u64));
-    group.bench_function(
-        BenchmarkId::new("TransposedQuadIndex", basename.clone()),
-        |b| {
+macro_rules! add_bench_random {
+    ($group:expr, $raw_file_path:expr, $basename:expr, $name:literal, $index_type:ty, $tolerance_type:ty, ) => {
+        $group.bench_function(BenchmarkId::new($name, $basename.clone()), |b| {
             b.iter_batched(
                 || {
                     (
-                        QuadSplittedTransposedIndex::from_path(&(raw_file_path.clone())).unwrap(),
-                        build_elution_groups(raw_file_path.clone()),
-                        DefaultTolerance::default(),
+                        <$index_type>::from_path(&($raw_file_path.clone())).unwrap(),
+                        build_elution_groups($raw_file_path.clone()),
+                        <$tolerance_type>::default(),
                     )
                 },
-                |(qst_file_index, query_groups, tolerance)| {
-                    let aggregator_factory = |id| RawPeakIntensityAggregator { intensity: 0 };
+                |(index, query_groups, tolerance)| {
+                    let aggregator_factory = |_id| RawPeakIntensityAggregator { intensity: 0 };
                     let local_lambda = |elution_group: &ElutionGroup| {
                         query_indexed(
-                            &qst_file_index,
+                            &index,
                             &aggregator_factory,
-                            &qst_file_index,
+                            &index,
                             &tolerance,
                             &elution_group,
                         )
                     };
                     for elution_group in query_groups {
                         let foo = local_lambda(&elution_group);
-                        black_box((|foo| false)(foo));
+                        black_box((|_foo| false)(foo));
                     }
                 },
                 BatchSize::PerIteration,
             )
-        },
-    );
-    group.bench_function(BenchmarkId::new("RawFileIndex", basename.clone()), |b| {
-        b.iter_batched(
-            || {
-                (
-                    RawFileIndex::from_path(&(raw_file_path.clone())).unwrap(),
-                    build_elution_groups(raw_file_path.clone()),
-                    DefaultTolerance::default(),
-                )
-            },
-            |(raw_file_index, query_groups, tolerance)| {
-                let aggregator_factory = |id| RawPeakIntensityAggregator { intensity: 0 };
-                let local_lambda = |elution_group: &ElutionGroup| {
-                    query_indexed(
-                        &raw_file_index,
-                        &aggregator_factory,
-                        &raw_file_index,
-                        &tolerance,
-                        &elution_group,
+        });
+    };
+}
+macro_rules! add_bench_optim {
+    ($group:expr, $raw_file_path:expr, $basename:expr, $name:literal, $index_type:ty, $tolerance_type:ty, $query_func:expr,) => {
+        $group.bench_function(BenchmarkId::new($name, $basename.clone()), |b| {
+            b.iter_batched(
+                || {
+                    (
+                        <$index_type>::from_path(&($raw_file_path.clone())).unwrap(),
+                        build_elution_groups($raw_file_path.clone()),
+                        <$tolerance_type>::default(),
                     )
-                };
-                for elution_group in query_groups {
-                    let foo = local_lambda(&elution_group);
-                    black_box((|foo| false)(foo));
-                }
-            },
-            BatchSize::PerIteration,
-        )
-    });
+                },
+                |(index, query_groups, tolerance)| {
+                    let aggregator_factory = |_id| RawPeakIntensityAggregator { intensity: 0 };
+                    let foo = query_multi_group(
+                        &index,
+                        &index,
+                        &tolerance,
+                        &query_groups,
+                        &aggregator_factory,
+                    );
+                    black_box((|_foo| false)(foo));
+                },
+                BatchSize::PerIteration,
+            )
+        });
+    };
+}
+
+fn thoughput_benchmark_random(c: &mut Criterion) {
+    let (raw_file_path, basename) = get_file_from_env();
+    let mut group = c.benchmark_group("RandomAccessThroughput");
+    group.significance_level(0.05).sample_size(10);
+    group.throughput(criterion::Throughput::Elements(NUM_ELUTION_GROUPS as u64));
+
+    add_bench_random!(
+        group,
+        raw_file_path,
+        basename,
+        "TransposedQuadIndex",
+        QuadSplittedTransposedIndex,
+        DefaultTolerance,
+    );
+
+    add_bench_random!(
+        group,
+        raw_file_path,
+        basename,
+        "RawFileIndex",
+        RawFileIndex,
+        DefaultTolerance,
+    );
 
     group.finish();
 }
 
 fn thoughput_benchmark_optim(c: &mut Criterion) {
+    env_logger::init();
     let (raw_file_path, basename) = get_file_from_env();
     let mut group = c.benchmark_group("BatchAccessThroughput");
     group.significance_level(0.05).sample_size(10);
     group.throughput(criterion::Throughput::Elements(NUM_ELUTION_GROUPS as u64));
-    group.bench_function(
-        BenchmarkId::new("TransposedQuadIndex", basename.clone()),
-        |b| {
-            b.iter_batched(
-                || {
-                    (
-                        QuadSplittedTransposedIndex::from_path(&(raw_file_path.clone())).unwrap(),
-                        build_elution_groups(raw_file_path.clone()),
-                        DefaultTolerance::default(),
-                    )
-                },
-                |(qst_file_index, query_groups, tolerance)| {
-                    let aggregator_factory = |id| RawPeakIntensityAggregator { intensity: 0 };
-                    let foo = query_multi_group(
-                        &qst_file_index,
-                        &qst_file_index,
-                        &tolerance,
-                        &query_groups,
-                        &aggregator_factory,
-                    );
-                    black_box((|foo| false)(foo));
-                },
-                BatchSize::PerIteration,
-            )
-        },
+
+    add_bench_optim!(
+        group,
+        raw_file_path,
+        basename,
+        "TransposedQuadIndex",
+        QuadSplittedTransposedIndex,
+        DefaultTolerance,
+        query_multi_group,
     );
-    group.bench_function(BenchmarkId::new("RawFileIndex", basename.clone()), |b| {
-        b.iter_batched(
-            || {
-                (
-                    RawFileIndex::from_path(&(raw_file_path.clone())).unwrap(),
-                    build_elution_groups(raw_file_path.clone()),
-                    DefaultTolerance::default(),
-                )
-            },
-            |(raw_file_index, query_groups, tolerance)| {
-                let aggregator_factory = |id| RawPeakIntensityAggregator { intensity: 0 };
-                let foo = query_multi_group(
-                    &raw_file_index,
-                    &raw_file_index,
-                    &tolerance,
-                    &query_groups,
-                    &aggregator_factory,
-                );
-                black_box((|foo| false)(foo));
-            },
-            BatchSize::PerIteration,
-        )
-    });
+
+    add_bench_optim!(
+        group,
+        raw_file_path,
+        basename,
+        "RawFileIndex",
+        RawFileIndex,
+        DefaultTolerance,
+        query_multi_group,
+    );
 
     group.finish();
 }
