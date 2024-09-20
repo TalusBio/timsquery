@@ -1,4 +1,6 @@
+use log::{debug, info};
 use std::rc::Rc;
+use std::time::Instant;
 
 use crate::{
     traits::aggregator, Aggregator, ElutionGroup, IndexedData, Tolerance, ToleranceAdapter,
@@ -95,6 +97,7 @@ where
     TA: ToleranceAdapter<QF>,
     TL: Tolerance,
 {
+    let start = Instant::now();
     let mut fragment_queries = Vec::with_capacity(elution_groups.len());
     let mut aggregators = Vec::with_capacity(elution_groups.len());
 
@@ -106,6 +109,19 @@ where
     }
 
     indexed_data.add_query_multi_group(&fragment_queries, &mut aggregators);
+    let duration = start.elapsed();
+    info!("Querying took {:#?}", duration);
+
+    let microsecond_duration = duration.as_micros();
+    let microseconds_per_query = microsecond_duration / elution_groups.len() as u128;
+    let queries_per_second = 1_000_000.0 / microseconds_per_query as f64;
+
+    info!("That is {:#?} queries per second", queries_per_second);
+    debug!(
+        "That is {:#?} microseconds per query",
+        microseconds_per_query
+    );
+
     aggregators
 }
 

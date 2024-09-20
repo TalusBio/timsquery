@@ -54,6 +54,7 @@ fn build_elution_groups(raw_file_path: String) -> Vec<ElutionGroup> {
     let mut rng = ChaCha8Rng::seed_from_u64(43u64);
 
     for i in 1..NUM_ELUTION_GROUPS {
+        // Rand f32/64 are number from 0-1
         let rt = rng.gen::<f32>() * MAX_RT;
         let mobility = rng.gen::<f32>() * (MAX_MOBILITY - MIN_MOBILITY) + MIN_MOBILITY;
         let mz = rng.gen::<f64>() * (MAX_MZ - MIN_MZ) + MIN_MZ;
@@ -69,7 +70,9 @@ fn build_elution_groups(raw_file_path: String) -> Vec<ElutionGroup> {
             fragment_charges.push(fragment_charge);
         }
 
-        let precursor_charge = rng.gen::<u8>() * 3 + 1;
+        // rand u8 is number from 0-255 ... which is not amazing for us ...
+        // let precursor_charge = rng.gen::<u8>() * 3 + 1;
+        let precursor_charge = 2;
 
         out_egs.push(ElutionGroup {
             id: i as u64,
@@ -125,11 +128,10 @@ macro_rules! add_bench_random {
                     )
                 },
                 |(index, query_groups, tolerance)| {
-                    let aggregator_factory = |_id| RawPeakIntensityAggregator { intensity: 0 };
                     let local_lambda = |elution_group: &ElutionGroup| {
                         query_indexed(
                             &index,
-                            &aggregator_factory,
+                            &RawPeakIntensityAggregator::new,
                             &index,
                             &tolerance,
                             &elution_group,
@@ -157,13 +159,12 @@ macro_rules! add_bench_optim {
                     )
                 },
                 |(index, query_groups, tolerance)| {
-                    let aggregator_factory = |_id| RawPeakIntensityAggregator { intensity: 0 };
                     let foo = query_multi_group(
                         &index,
                         &index,
                         &tolerance,
                         &query_groups,
-                        &aggregator_factory,
+                        &RawPeakIntensityAggregator::new,
                     );
                     black_box((|_foo| false)(foo));
                 },

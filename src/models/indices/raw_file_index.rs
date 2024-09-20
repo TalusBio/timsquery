@@ -16,6 +16,7 @@ use crate::models::queries::{
 };
 use crate::traits::indexed_data::IndexedData;
 use crate::ToleranceAdapter;
+use log::trace;
 
 pub struct RawFileIndex {
     file_reader: FrameReader,
@@ -64,6 +65,8 @@ impl RawFileIndex {
         fqs: &'b FragmentGroupIndexQuery,
         fun: &'c mut dyn for<'r> FnMut(RawPeak, Arc<QuadrupoleSettings>),
     ) {
+        trace!("RawFileIndex::apply_on_query");
+        trace!("FragmentGroupIndexQuery: {:?}", fqs);
         let frames: Vec<Frame> = self
             .read_frames_in_range(&fqs.precursor_query.frame_index_range)
             .filter(|x| x.is_ok())
@@ -107,9 +110,9 @@ impl RawFileIndex {
         let quad_range = tol.quad_range(elution_group.precursor_mz, elution_group.precursor_charge);
 
         let mut min_scan_index =
-            self.meta_converters.rt_converter.invert(mobility_range.0) as usize;
+            self.meta_converters.im_converter.invert(mobility_range.0) as usize;
         let mut max_scan_index =
-            self.meta_converters.rt_converter.invert(mobility_range.1) as usize;
+            self.meta_converters.im_converter.invert(mobility_range.1) as usize;
 
         if min_scan_index > max_scan_index {
             std::mem::swap(&mut min_scan_index, &mut max_scan_index);

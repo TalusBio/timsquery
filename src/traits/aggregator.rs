@@ -5,5 +5,5 @@ pub trait Aggregator<I>: Send + Sync {
 
     fn add(&mut self, item: &I);
     fn fold(&mut self, item: Self);
-    fn finalize(&self) -> Self::Output;
+    fn finalize(self) -> Self::Output;
 }

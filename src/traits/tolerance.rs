@@ -88,11 +88,25 @@ impl Tolerance for DefaultTolerance {
     }
 
     fn quad_range(&self, precursor_mz: f64, precursor_charge: u8) -> (f32, f32) {
+        // Should this be a recoverable error?
+        if precursor_charge == 0 {
+            panic!("Precursor charge is 0, inputs: self: {:?}, precursor_mz: {:?}, precursor_charge: {:?}", self, precursor_mz, precursor_charge);
+        };
         match self.quad {
             QuadTolerance::Absolute((low, high, num_isotopes)) => {
                 let max_offset = (1.0 / precursor_charge as f32) * num_isotopes as f32;
                 let f32_mz = precursor_mz as f32;
-                (f32_mz - low - max_offset, f32_mz + high + max_offset)
+                let mz_low = f32_mz - low - max_offset;
+                let mz_high = f32_mz + high + max_offset;
+                assert!(mz_low <= mz_high);
+                assert!(
+                    mz_low > 0.0,
+                    "Precursor mz is 0 or less, inputs: self: {:?}, precursor_mz: {:?}, precursor_charge: {:?}",
+                    self,
+                    precursor_mz,
+                    precursor_charge
+                );
+                (mz_low, mz_high)
             }
         }
     }

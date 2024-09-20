@@ -42,14 +42,37 @@ pub fn frame_elems_matching<'a>(
         scan_range,
         quad_range
     );
-    let quad_range = quad_range
+    let quad_scan_range = quad_range
         .and_then(|quad_range| scans_matching_quad(&frame.quadrupole_settings, quad_range));
 
-    let (scan_ind_start, scan_ind_end): (usize, usize) = match quad_range {
-        Some((start, end)) => (start.max(scan_range.0), end.min(scan_range.1)),
-        None => (scan_range.0, scan_range.1),
+    let scan_range_use = if quad_scan_range.is_none() {
+        0..0
+    } else {
+        let quad_scan_range = quad_scan_range.unwrap();
+
+        // Only checkinghere bc its common for them to get flipped
+        // bc skill issues. (and the highest scan is actually the lowest 1/k0)
+        let min_scan = scan_range.0.min(scan_range.1);
+        let max_scan = scan_range.0.max(scan_range.1);
+
+        let min_quad_scan = quad_scan_range.0.min(quad_scan_range.1);
+        let max_quad_scan = quad_scan_range.0.max(quad_scan_range.1);
+
+        let (scan_ind_start, scan_ind_end): (usize, usize) =
+            (min_quad_scan.max(min_scan), max_quad_scan.min(max_scan));
+
+        if scan_ind_end < scan_ind_start {
+            // This can happen if the quad range matches but not the scan range.
+            // TODO refactor this logic...
+            0..0
+        } else {
+            scan_ind_start..scan_ind_end
+        }
     };
-    (scan_ind_start..scan_ind_end)
+
+    let retention_time = frame.rt as f32;
+
+    scan_range_use
         .map(move |scan_index| {
             let scan_is = frame.scan_offsets[scan_index];
             let scan_ie = frame.scan_offsets[scan_index + 1];
@@ -66,6 +89,7 @@ pub fn frame_elems_matching<'a>(
                     scan_index,
                     tof_index: tof_ind,
                     intensity,
+                    retention_time,
                 })
                 .collect();
 

@@ -1,3 +1,4 @@
+#[derive(Debug, Clone)]
 pub struct PrecursorIndexQuery {
     pub frame_index_range: (usize, usize),
     pub mz_index_range: (u32, u32),
@@ -5,6 +6,7 @@ pub struct PrecursorIndexQuery {
     pub isolation_mz_range: (f32, f32),
 }
 
+#[derive(Debug, Clone)]
 pub struct FragmentGroupIndexQuery {
     pub mz_index_ranges: Vec<(u32, u32)>,
     pub precursor_query: PrecursorIndexQuery,
