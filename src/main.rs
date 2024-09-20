@@ -14,7 +14,6 @@ use timsquery::{
 use timsquery::traits::tolerance::{MobilityTolerance, MzToleramce, QuadTolerance, RtTolerance};
 
 use clap::{Parser, Subcommand};
-use log::{debug, info};
 use serde::{Deserialize, Serialize};
 
 fn main() {

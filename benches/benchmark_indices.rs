@@ -1,7 +1,4 @@
-use criterion::{
-    criterion_group, criterion_main, measurement::Measurement, BatchSize, BenchmarkFilter,
-    BenchmarkGroup, BenchmarkId, Criterion,
-};
+use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
@@ -12,14 +9,10 @@ use timsquery::{
         indices::{
             raw_file_index::RawFileIndex, transposed_quad_index::QuadSplittedTransposedIndex,
         },
-        queries::{
-            FragmentGroupIndexQuery, NaturalFragmentQuery, NaturalPrecursorQuery,
-            PrecursorIndexQuery,
-        },
     },
     queriable_tims_data::queriable_tims_data::{query_indexed, query_multi_group},
     traits::tolerance::DefaultTolerance,
-    ElutionGroup, QueriableTimsData,
+    ElutionGroup,
 };
 
 fn get_file_from_env() -> (String, String) {
@@ -138,8 +131,8 @@ macro_rules! add_bench_random {
                         )
                     };
                     for elution_group in query_groups {
-                        let foo = local_lambda(&elution_group);
-                        black_box((|_foo| false)(foo));
+                        let query_results = local_lambda(&elution_group);
+                        black_box((|_query_results| false)(query_results));
                     }
                 },
                 BatchSize::PerIteration,
@@ -159,14 +152,14 @@ macro_rules! add_bench_optim {
                     )
                 },
                 |(index, query_groups, tolerance)| {
-                    let foo = query_multi_group(
+                    let qr = query_multi_group(
                         &index,
                         &index,
                         &tolerance,
                         &query_groups,
                         &RawPeakIntensityAggregator::new,
                     );
-                    black_box((|_foo| false)(foo));
+                    black_box((|_qr| false)(qr));
                 },
                 BatchSize::PerIteration,
             )

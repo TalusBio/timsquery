@@ -1,7 +1,7 @@
 use serde::Serialize;
 use std::collections::BTreeMap;
 
-use super::super::streaming_aggregator::{RunningStatsCalculator, StreamingAggregatorError};
+use super::super::streaming_aggregator::RunningStatsCalculator;
 use crate::models::frames::raw_peak::RawPeak;
 use crate::traits::aggregator::Aggregator;
 
@@ -128,7 +128,7 @@ impl Aggregator<RawPeak> for ChromatomobilogramStats {
 
     fn finalize(self) -> ChromatomobilogramStatsArrays {
         ChromatomobilogramStatsArrays {
-            retention_time_miliseconds: self.scan_tree.keys().map(|x| *x).collect::<Vec<u32>>(),
+            retention_time_miliseconds: self.scan_tree.keys().cloned().collect::<Vec<u32>>(),
             tof_index_means: self
                 .tof_tree
                 .values()

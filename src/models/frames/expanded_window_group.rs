@@ -2,7 +2,7 @@ use std::iter::repeat;
 
 use super::expanded_frame::ExpandedFrameSlice;
 use super::single_quad_settings::SingleQuadrupoleSetting;
-use timsrust::{AcquisitionType, Frame, MSLevel, QuadrupoleSettings};
+use timsrust::{AcquisitionType, MSLevel};
 
 pub struct ExpandedWindowGroup {
     pub tof_indices: Vec<u32>,

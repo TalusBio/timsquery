@@ -72,28 +72,26 @@ pub fn frame_elems_matching<'a>(
 
     let retention_time = frame.rt as f32;
 
-    scan_range_use
-        .map(move |scan_index| {
-            let scan_is = frame.scan_offsets[scan_index];
-            let scan_ie = frame.scan_offsets[scan_index + 1];
+    scan_range_use.flat_map(move |scan_index| {
+        let scan_is = frame.scan_offsets[scan_index];
+        let scan_ie = frame.scan_offsets[scan_index + 1];
 
-            let outs: Vec<RawPeak> = (scan_is..scan_ie)
-                .map(move |peak_index| {
-                    let tof_ind = frame.tof_indices[peak_index];
-                    let intensity = frame.intensities[peak_index];
+        let outs: Vec<RawPeak> = (scan_is..scan_ie)
+            .map(move |peak_index| {
+                let tof_ind = frame.tof_indices[peak_index];
+                let intensity = frame.intensities[peak_index];
 
-                    (tof_ind, intensity, scan_index)
-                })
-                .filter(|(tof_ind, _, _)| *tof_ind >= tof_range.0 && *tof_ind < tof_range.1)
-                .map(|(tof_ind, intensity, scan_index)| RawPeak {
-                    scan_index,
-                    tof_index: tof_ind,
-                    intensity,
-                    retention_time,
-                })
-                .collect();
+                (tof_ind, intensity, scan_index)
+            })
+            .filter(|(tof_ind, _, _)| *tof_ind >= tof_range.0 && *tof_ind < tof_range.1)
+            .map(|(tof_ind, intensity, scan_index)| RawPeak {
+                scan_index,
+                tof_index: tof_ind,
+                intensity,
+                retention_time,
+            })
+            .collect();
 
-            outs
-        })
-        .flatten()
+        outs
+    })
 }

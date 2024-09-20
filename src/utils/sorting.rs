@@ -49,7 +49,7 @@ where
     F: Fn(&T) -> K,
     K: Ord,
 {
-    let mut indices = argsort_by(&vectors[0], |x| key(x));
+    let mut indices = argsort_by(vectors[0], |x| key(x));
     place_at_indices_n(vectors, &mut indices);
 }
 

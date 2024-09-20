@@ -1,19 +1,15 @@
-use core::panic;
-use std::process::Output;
 use std::sync::Arc;
 
 use rayon::iter::ParallelIterator;
 use timsrust::converters::ConvertableDomain;
-use timsrust::readers::{FrameReader, FrameReaderError, MetadataReader, QuadrupoleSettingsReader};
+use timsrust::readers::{FrameReader, FrameReaderError, MetadataReader};
 use timsrust::TimsRustError;
 use timsrust::{Frame, Metadata, QuadrupoleSettings};
 // use timsrust::io::;
 
 use crate::models::frames::raw_frames::frame_elems_matching;
 use crate::models::frames::raw_peak::RawPeak;
-use crate::models::queries::{
-    FragmentGroupIndexQuery, NaturalFragmentQuery, NaturalPrecursorQuery, PrecursorIndexQuery,
-};
+use crate::models::queries::{FragmentGroupIndexQuery, NaturalPrecursorQuery, PrecursorIndexQuery};
 use crate::traits::indexed_data::IndexedData;
 use crate::ToleranceAdapter;
 use log::trace;
@@ -21,20 +17,17 @@ use log::trace;
 pub struct RawFileIndex {
     file_reader: FrameReader,
     meta_converters: Metadata,
-    quad_settings_reader: Vec<QuadrupoleSettings>,
 }
 
 impl RawFileIndex {
     pub fn from_path(path: &str) -> Result<Self, TimsRustError> {
-        let file_reader = FrameReader::new(&path)?;
+        let file_reader = FrameReader::new(path)?;
 
         let sql_path = std::path::Path::new(path).join("analysis.tdf");
         let meta_converters = MetadataReader::new(&sql_path)?;
-        let quad_settings_reader = QuadrupoleSettingsReader::new(&sql_path)?;
         Ok(Self {
             file_reader,
             meta_converters,
-            quad_settings_reader,
         })
     }
 
@@ -132,7 +125,7 @@ impl RawFileIndex {
         }
     }
 
-    fn queries_from_elution_elements_impl<'d>(
+    fn queries_from_elution_elements_impl(
         &self,
         tol: &dyn crate::traits::tolerance::Tolerance,
         elution_elements: &crate::models::elution_group::ElutionGroup,
@@ -161,7 +154,7 @@ impl RawFileIndex {
 impl IndexedData<FragmentGroupIndexQuery, RawPeak> for RawFileIndex {
     fn query(&self, fragment_query: &FragmentGroupIndexQuery) -> Option<Vec<RawPeak>> {
         let mut out = Vec::new();
-        self.apply_on_query(&fragment_query, &mut |peak, _| out.push(peak));
+        self.apply_on_query(fragment_query, &mut |peak, _| out.push(peak));
         Some(out)
     }
 
@@ -170,7 +163,7 @@ impl IndexedData<FragmentGroupIndexQuery, RawPeak> for RawFileIndex {
         fragment_query: &FragmentGroupIndexQuery,
         aggregator: &mut AG,
     ) {
-        self.apply_on_query(&fragment_query, &mut |peak, _| aggregator.add(&peak));
+        self.apply_on_query(fragment_query, &mut |peak, _| aggregator.add(&peak));
     }
 
     fn add_query_multi_group<O, AG: crate::Aggregator<RawPeak, Output = O>>(

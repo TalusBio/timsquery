@@ -10,7 +10,6 @@ use crate::utils::display::{glimpse_vec, GlimpseConfig};
 use crate::utils::sorting::argsort_by;
 use crate::ToleranceAdapter;
 use core::panic;
-use itertools::Itertools;
 use log::trace;
 use log::{debug, info};
 use std::collections::BTreeMap;
@@ -80,18 +79,12 @@ impl QuadSplittedTransposedIndex {
             .collect();
         trace!("matching_quads: {:?}", matching_quads);
 
-        let rt_range = match rt_range {
-            Some(x) => Some(x.to_frame_index_range(&self.rt_converter)),
-            None => None,
-        };
+        let rt_range = rt_range.map(|x| x.to_frame_index_range(&self.rt_converter));
 
-        matching_quads
-            .into_iter()
-            .map(move |qs| {
-                let tqi = self.indices.get(&qs).unwrap();
-                tqi.query_peaks(tof_range, scan_range, rt_range.clone())
-            })
-            .flatten()
+        matching_quads.into_iter().flat_map(move |qs| {
+            let tqi = self.indices.get(&qs).unwrap();
+            tqi.query_peaks(tof_range, scan_range, rt_range)
+        })
     }
 
     fn get_matching_quad_settings(

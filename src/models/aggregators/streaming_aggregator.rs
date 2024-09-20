@@ -12,40 +12,6 @@ pub enum StreamingAggregatorError {
 
 type Result<T> = std::result::Result<T, StreamingAggregatorError>;
 
-pub struct StreamingMeanAggregator {
-    pub aggregation: u128,
-    pub weight: u128, // Pretty sure an u64 is enough ...
-    pub points: u64,
-}
-
-impl StreamingMeanAggregator {
-    pub fn new() -> Self {
-        Self {
-            aggregation: 0,
-            weight: 0,
-            points: 0,
-        }
-    }
-
-    fn add(&mut self, value: u128, weight: u128) {
-        self.aggregation += value;
-        self.weight += weight;
-        self.points += 1;
-    }
-
-    fn fold(&mut self, other: Self) {
-        self.aggregation += other.aggregation;
-        self.weight += other.weight;
-    }
-
-    fn mean(&self) -> Result<f64> {
-        if self.weight == 0 {
-            return Err(StreamingAggregatorError::NotEnoughData);
-        }
-        Ok(self.aggregation as f64 / self.weight as f64)
-    }
-}
-
 /// Ref impl in javascript ...
 /// https://nestedsoftware.com/2018/03/27/calculating-standard-deviation-on-streaming-data-253l.23919.html
 /// https://nestedsoftware.com/2019/09/26/incremental-average-and-standard-deviation-with-sliding-window-470k.176143.html
@@ -151,8 +117,8 @@ mod tests {
     #[test]
     fn test_running_stats_calculator_ascombes_3() {
         let mut calc = RunningStatsCalculator::new(1, ASCOMBES_3[0]);
-        for i in 1..ASCOMBES_3.len() {
-            calc.add(ASCOMBES_3[i], 1);
+        for val in ASCOMBES_3[1..].iter() {
+            calc.add(*val, 1);
         }
         assert!(calc.mean().unwrap() < 7.6);
         assert!(calc.mean().unwrap() > 7.4);
@@ -163,8 +129,8 @@ mod tests {
     #[test]
     fn test_running_stats_calculator_ascombes_4() {
         let mut calc = RunningStatsCalculator::new(1, ASCOMBES_4[0]);
-        for i in 1..ASCOMBES_4.len() {
-            calc.add(ASCOMBES_4[i], 1);
+        for val in ASCOMBES_4[1..].iter() {
+            calc.add(*val, 1);
         }
         assert!(calc.mean().unwrap() < 7.6);
         assert!(calc.mean().unwrap() > 7.4);

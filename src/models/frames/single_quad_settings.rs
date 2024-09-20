@@ -1,11 +1,7 @@
 use std::fmt::Display;
 use std::hash::Hash;
-use std::sync::Arc;
 
-use timsrust::{AcquisitionType, Frame, MSLevel, QuadrupoleSettings};
-
-use crate::sort_by_indices_multi;
-use crate::utils::sorting::argsort_by;
+use timsrust::QuadrupoleSettings;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SingleQuadrupoleSettingIndex {
@@ -110,10 +106,7 @@ pub fn expand_quad_settings(quad_settings: &QuadrupoleSettings) -> Vec<SingleQua
             collision_energy,
         };
 
-        out.push(SingleQuadrupoleSetting {
-            index: index,
-            ranges: ranges,
-        });
+        out.push(SingleQuadrupoleSetting { index, ranges });
     }
     out
 }

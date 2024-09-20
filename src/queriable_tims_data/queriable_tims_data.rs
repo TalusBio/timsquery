@@ -1,10 +1,8 @@
-use log::{debug, info};
+use log::info;
 use std::rc::Rc;
 use std::time::Instant;
 
-use crate::{
-    traits::aggregator, Aggregator, ElutionGroup, IndexedData, Tolerance, ToleranceAdapter,
-};
+use crate::{Aggregator, ElutionGroup, IndexedData, Tolerance, ToleranceAdapter};
 
 /// A struct that can be queried for TIMS data.
 ///
@@ -58,14 +56,14 @@ where
     TA: ToleranceAdapter<QF>,
     TL: Tolerance,
 {
-    pub fn query<'b>(&self, elution_group: &'b ElutionGroup) -> Option<OE> {
+    pub fn query(&self, elution_group: &ElutionGroup) -> OE {
         let mut aggregator = (self.aggregator_factory)(elution_group.id);
         let prep_query = self
             .tolerance_adapter
             .query_from_elution_group(self.tolerance, elution_group);
 
         self.indexed_data.add_query(&prep_query, &mut aggregator);
-        Some(aggregator.finalize())
+        aggregator.finalize()
     }
 
     pub fn add_query_multi_group(&self, elution_groups: &[ElutionGroup], aggregators: &mut [AG]) {
@@ -117,7 +115,7 @@ where
     let queries_per_second = 1_000_000.0 / microseconds_per_query as f64;
 
     info!("That is {:#?} queries per second", queries_per_second);
-    debug!(
+    info!(
         "That is {:#?} microseconds per query",
         microseconds_per_query
     );
@@ -125,13 +123,13 @@ where
     aggregators
 }
 
-pub fn query_indexed<'elution, ID, TA, TL, QF, AE, OE, AG>(
+pub fn query_indexed<ID, TA, TL, QF, AE, OE, AG>(
     indexed_data: &ID,
     aggregator_factory: &dyn Fn(u64) -> AG,
     tolerance_adapter: &TA,
     tolerance: &TL,
-    elution_group: &'elution ElutionGroup,
-) -> Option<OE>
+    elution_group: &ElutionGroup,
+) -> OE
 where
     AG: Aggregator<AE, Output = OE> + Send + Sync,
     ID: IndexedData<QF, AE>,
@@ -142,5 +140,5 @@ where
     let prep_query = Rc::new(tolerance_adapter.query_from_elution_group(tolerance, elution_group));
 
     indexed_data.add_query(&prep_query, &mut aggregator);
-    Some(aggregator.finalize())
+    aggregator.finalize()
 }
