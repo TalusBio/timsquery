@@ -1,4 +1,3 @@
-
 pub trait Aggregator<I>: Send + Sync {
     type Output;
 

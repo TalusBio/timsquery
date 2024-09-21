@@ -1,3 +1,4 @@
+use std::time::Instant;
 use timsquery::models::elution_group::ElutionGroup;
 use timsquery::queriable_tims_data::queriable_tims_data::query_multi_group;
 use timsquery::traits::tolerance::DefaultTolerance;
@@ -31,7 +32,8 @@ fn main() {
 
 fn main_write_template(args: WriteTemplateArgs) {
     let output_path = args.output_path;
-    let egs = template_elution_groups(10);
+    let num_elution_groups = args.num_elution_groups;
+    let egs = template_elution_groups(num_elution_groups);
     let tolerance = template_tolerance_settings();
 
     // Serialize both and write as files in the output path.
@@ -55,12 +57,24 @@ fn main_write_template(args: WriteTemplateArgs) {
 
 fn template_elution_groups(num: usize) -> Vec<ElutionGroup> {
     let mut egs = Vec::with_capacity(num);
+
+    let min_mz = 400.0;
+    let max_mz = 900.0;
+    let max_mobility = 0.8;
+    let min_mobility = 0.6;
+    let min_rt = 66.0;
+    let max_rt = 11.0 * 60.0;
+
+    let rt_step = (max_rt - min_rt) / (num as f32);
+    let mobility_step = (max_mobility - min_mobility) / (num as f32);
+    let mz_step = (max_mz - min_mz) / (num as f64);
+
     for i in 1..num {
-        let rt = 300.0 + (i as f32 * 10.0);
-        let mobility = 1.0 + (i as f32 * 0.01);
-        let mz = 500.0 + (i as f64 * 10.0);
+        let rt = min_rt + (i as f32 * rt_step);
+        let mobility = min_mobility + (i as f32 * mobility_step);
+        let mz = min_mz + (i as f64 * mz_step);
         let precursor_charge = 2;
-        let fragment_mzs = Some(vec![mz]);
+        let fragment_mzs = Some((0..10).map(|x| mz + x as f64).collect::<Vec<f64>>());
         let fragment_charges = Some(vec![precursor_charge]);
         egs.push(ElutionGroup {
             id: i as u64,
@@ -110,8 +124,9 @@ fn main_query_index(args: QueryIndexArgs) {
 
 fn template_tolerance_settings() -> DefaultTolerance {
     DefaultTolerance {
-        ms: MzToleramce::Ppm((20.0, 20.0)),
-        rt: RtTolerance::Absolute((5.0, 5.0)),
+        ms: MzToleramce::Ppm((50.0, 50.0)),
+        // rt: RtTolerance::Absolute((120.0, 120.0)),
+        rt: RtTolerance::None,
         mobility: MobilityTolerance::Pct((30.0, 30.0)),
         quad: QuadTolerance::Absolute((0.1, 0.1, 1)),
     }
@@ -177,6 +192,10 @@ struct WriteTemplateArgs {
     /// The path to the output files.
     #[arg(short, long)]
     output_path: String,
+
+    /// The number of elution groups to generate.
+    #[arg(short, long, default_value_t = 10)]
+    num_elution_groups: usize,
 }
 
 #[derive(Subcommand, Debug)]
@@ -208,7 +227,7 @@ pub fn execute_query(
             let tmp = query_multi_group(&$index, &$index, &tolerance, &elution_groups, &$agg);
             // debug!("{:?}", tmp);
 
-            let start = std::time::Instant::now();
+            let start = Instant::now();
             let mut out = Vec::with_capacity(tmp.len());
             for (res, eg) in tmp.into_iter().zip(elution_groups) {
                 out.push(ElutionGroupResults {
@@ -224,6 +243,7 @@ pub fn execute_query(
             std::fs::create_dir_all(put_path.parent().unwrap()).unwrap();
             println!("Writing to {}", put_path.display());
 
+            let serialization_start = Instant::now();
             let serialized = if pretty_print {
                 println!("Pretty printing enabled");
                 serde_json::to_string_pretty(&out).unwrap()
@@ -231,6 +251,8 @@ pub fn execute_query(
                 serde_json::to_string(&out).unwrap()
             };
             std::fs::write(put_path, serialized).unwrap();
+            let serialization_elapsed = serialization_start.elapsed();
+            println!("Serialization took {:#?}", serialization_elapsed);
         };
     }
 

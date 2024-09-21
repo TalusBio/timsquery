@@ -14,12 +14,14 @@ pub enum MzToleramce {
 pub enum RtTolerance {
     Absolute((f32, f32)),
     Pct((f32, f32)),
+    None,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MobilityTolerance {
     Absolute((f32, f32)),
     Pct((f32, f32)),
+    None,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,8 +50,8 @@ impl Default for DefaultTolerance {
 
 pub trait Tolerance {
     fn mz_range(&self, mz: f64) -> (f64, f64);
-    fn rt_range(&self, rt: f32) -> (f32, f32);
-    fn mobility_range(&self, mobility: f32) -> (f32, f32);
+    fn rt_range(&self, rt: f32) -> Option<(f32, f32)>;
+    fn mobility_range(&self, mobility: f32) -> Option<(f32, f32)>;
     fn quad_range(&self, precursor_mz: f64, precursor_charge: u8) -> (f32, f32);
 }
 
@@ -65,25 +67,27 @@ impl Tolerance for DefaultTolerance {
         }
     }
 
-    fn rt_range(&self, rt: f32) -> (f32, f32) {
+    fn rt_range(&self, rt: f32) -> Option<(f32, f32)> {
         match self.rt {
-            RtTolerance::Absolute((low, high)) => (rt - low, rt + high),
+            RtTolerance::Absolute((low, high)) => Some((rt - low, rt + high)),
             RtTolerance::Pct((low, high)) => {
                 let low = rt * low / 100.0;
                 let high = rt * high / 100.0;
-                (rt - low, rt + high)
+                Some((rt - low, rt + high))
             }
+            RtTolerance::None => None,
         }
     }
 
-    fn mobility_range(&self, mobility: f32) -> (f32, f32) {
+    fn mobility_range(&self, mobility: f32) -> Option<(f32, f32)> {
         match self.mobility {
-            MobilityTolerance::Absolute((low, high)) => (mobility - low, mobility + high),
+            MobilityTolerance::Absolute((low, high)) => Some((mobility - low, mobility + high)),
             MobilityTolerance::Pct((low, high)) => {
                 let low = mobility * (low / 100.0);
                 let high = mobility * (high / 100.0);
-                (mobility - low, mobility + high)
+                Some((mobility - low, mobility + high))
             }
+            MobilityTolerance::None => None,
         }
     }
 

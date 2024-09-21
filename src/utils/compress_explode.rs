@@ -59,18 +59,25 @@ pub fn compress_vec(input: &[usize]) -> Vec<usize> {
 
     assert!(
         input.windows(2).all(|w| w[0] <= w[1]),
-        "Input slice must be monotonically increasing"
+        "Input slice must be monotonically increasing, got {:?}",
+        input
     );
 
     let max_value = *input.last().unwrap();
     // Here the output is actually max + 2 to account for the 0 value.
     let mut compressed = vec![0; max_value + 2];
-    let mut current_index = 0;
+    let mut current_index: usize;
 
     for value in 0..=max_value {
-        while current_index < input.len() && input[current_index] <= value {
-            current_index += 1;
-        }
+        // TODO use a less hacky way to find the half step.
+        // Some pattern matching magic will do... later ...
+        let seek = value as f32 + 0.5;
+        let bsearch = input.binary_search_by(|x| (*x as f32).partial_cmp(&seek).unwrap());
+        current_index = match bsearch {
+            Ok(i) => panic!("A half step should never be found"),
+            Err(i) => i,
+        };
+
         // Here we add 1 to account for the 0 value.
         compressed[value + 1] = current_index;
     }
@@ -93,7 +100,7 @@ mod tests {
     fn test_vec_explode_empty() {
         let data = vec![];
         let out = explode_vec(&data);
-        assert_eq!(out, vec![]);
+        assert_eq!(out.len(), 0);
     }
 
     #[test]
@@ -125,7 +132,7 @@ mod tests {
     fn test_vec_compress_empty() {
         let data = vec![];
         let out = compress_vec(&data);
-        assert_eq!(out, vec![]);
+        assert_eq!(out.len(), 0);
     }
 
     #[test]

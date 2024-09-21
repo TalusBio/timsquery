@@ -13,6 +13,8 @@ use core::panic;
 use log::trace;
 use log::{debug, info};
 use std::collections::BTreeMap;
+use std::time::Instant;
+use timsrust::Metadata;
 
 use rayon::prelude::*;
 
@@ -26,8 +28,6 @@ use timsrust::readers::{FrameReader, MetadataReader};
 use timsrust::Frame;
 use timsrust::TimsRustError;
 
-use indicatif::ProgressIterator;
-
 // TODO break this module apart ... its getting too big for my taste
 // - JSP: 2024-11-19
 
@@ -37,6 +37,7 @@ pub struct QuadSplittedTransposedIndex {
     rt_converter: Frame2RtConverter,
     mz_converter: Tof2MzConverter,
     im_converter: Scan2ImConverter,
+    metadata: Metadata,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -109,7 +110,7 @@ impl QuadSplittedTransposedIndex {
                     true
                 }
             })
-            .map(|x| x.clone())
+            .cloned()
     }
 
     fn queries_from_elution_elements_impl(
@@ -126,10 +127,18 @@ impl QuadSplittedTransposedIndex {
             self.mz_converter.invert(precursor_mz_range.0) as u32,
             self.mz_converter.invert(precursor_mz_range.1) as u32,
         );
+        let mobility_range = match mobility_range {
+            Some(mobility_range) => mobility_range,
+            None => (self.metadata.lower_im as f32, self.metadata.upper_im as f32),
+        };
         let mobility_index_range = (
             self.im_converter.invert(mobility_range.0) as usize,
             self.im_converter.invert(mobility_range.1) as usize,
         );
+        let rt_range = match rt_range {
+            Some(rt_range) => rt_range,
+            None => (self.metadata.lower_rt as f32, self.metadata.upper_rt as f32),
+        };
         let frame_index_range = (
             self.rt_converter.invert(rt_range.0) as usize,
             self.rt_converter.invert(rt_range.1) as usize,
@@ -139,8 +148,8 @@ impl QuadSplittedTransposedIndex {
         assert!(mz_index_range.0 <= mz_index_range.1);
         // assert!(mobility_index_range.0 <= mobility_index_range.1);
         let mobility_index_range = (
-            mobility_index_range.0.min(mobility_index_range.1) as usize,
-            mobility_index_range.1.max(mobility_index_range.0) as usize,
+            mobility_index_range.0.min(mobility_index_range.1),
+            mobility_index_range.1.max(mobility_index_range.0),
         );
 
         let precursor_query = PrecursorIndexQuery {
@@ -178,7 +187,7 @@ impl Display for QuadSplittedTransposedIndex {
         disp_str.push_str(&format!("rt_converter: ... not showing ...\n",));
         disp_str.push_str(&format!("mz_converter: {:?}\n", self.mz_converter));
         disp_str.push_str(&format!("im_converter: {:?}\n", self.im_converter));
-        disp_str.push_str(&"flat_quad_settings: \n");
+        disp_str.push_str("flat_quad_settings: \n");
         disp_str.push_str(&glimpse_vec(
             &self.flat_quad_settings,
             Some(GlimpseConfig {
@@ -204,11 +213,12 @@ impl Display for QuadSplittedTransposedIndex {
 
 impl QuadSplittedTransposedIndex {
     pub fn from_path(path: &str) -> Result<Self, TimsRustError> {
-        // 11.305 s on a normal file in my pc ... rlly not bad
+        let st = Instant::now();
         info!("Building transposed quad index from path {}", path);
         let tmp = QuadSplittedTransposedIndexBuilder::from_path(path)?;
         let out = tmp.build();
-        info!("Transposed quad index built");
+        let elapsed = st.elapsed();
+        info!("Transposed quad index built in {:#?}", elapsed);
         debug!("{}", out);
         Ok(out)
     }
@@ -216,12 +226,23 @@ impl QuadSplittedTransposedIndex {
 
 pub struct QuadSplittedTransposedIndexBuilder {
     indices: HashMap<SingleQuadrupoleSetting, TransposedQuadIndexBuilder>,
-    rt_converter: Frame2RtConverter,
-    mz_converter: Tof2MzConverter,
-    im_converter: Scan2ImConverter,
+    rt_converter: Option<Frame2RtConverter>,
+    mz_converter: Option<Tof2MzConverter>,
+    im_converter: Option<Scan2ImConverter>,
+    metadata: Option<Metadata>,
 }
 
 impl QuadSplittedTransposedIndexBuilder {
+    fn new() -> Self {
+        Self {
+            indices: HashMap::new(),
+            rt_converter: None,
+            mz_converter: None,
+            im_converter: None,
+            metadata: None,
+        }
+    }
+
     fn add_frame(&mut self, frame: Frame) {
         let expanded_quad_settings = expand_quad_settings(&frame.quadrupole_settings);
         let exploded_scans = explode_vec(&frame.scan_offsets);
@@ -264,28 +285,75 @@ impl QuadSplittedTransposedIndexBuilder {
         let sql_path = std::path::Path::new(path).join("analysis.tdf");
         let meta_converters = MetadataReader::new(&sql_path)?;
 
-        let mut out = Self {
+        let mut final_out = Self {
             indices: HashMap::new(),
-            rt_converter: meta_converters.rt_converter,
-            mz_converter: meta_converters.mz_converter,
-            im_converter: meta_converters.im_converter,
+            rt_converter: Some(meta_converters.rt_converter.clone()),
+            mz_converter: Some(meta_converters.mz_converter.clone()),
+            im_converter: Some(meta_converters.im_converter.clone()),
+            metadata: Some(meta_converters.clone()),
         };
-        for frame in file_reader.get_all().into_iter().progress() {
-            let frame = frame?;
-            out.add_frame(frame);
-        }
 
-        Ok(out)
+        // If I implement fold ... I can do this in parallel.
+        // By splitting the frames into batches and doing the folds in parallel.
+        //
+        let out2: Result<Vec<Self>, TimsRustError> = file_reader
+            .get_all()
+            .into_par_iter()
+            .chunks(100)
+            .map(|frames| {
+                let mut out = Self::new();
+                for frame in frames {
+                    let frame = frame?;
+                    out.add_frame(frame);
+                }
+                Ok(out)
+            })
+            .collect();
+
+        let out2 = out2?.into_iter().fold(Self::new(), |mut x, y| {
+            x.fold(y);
+            x
+        });
+        final_out.fold(out2);
+
+        // for frame in file_reader.get_all().into_iter().progress() {
+        //     let frame = frame?;
+        //     out.add_frame(frame);
+        // }
+
+        Ok(final_out)
+    }
+
+    fn fold(&mut self, other: Self) {
+        for (qs, builder) in other.indices.into_iter() {
+            self.indices
+                .entry(qs)
+                .and_modify(|bl| bl.fold(builder.clone()))
+                .or_insert(builder);
+        }
     }
 
     fn build(self) -> QuadSplittedTransposedIndex {
         let mut indices = HashMap::new();
         let mut flat_quad_settings = Vec::new();
-        for (qs, builder) in self.indices.into_iter().progress() {
-            let tmp = Arc::new(qs);
-            indices.insert(tmp.clone(), builder.build());
-            flat_quad_settings.push(qs.clone());
+        // for (qs, builder) in self.indices.into_iter().progress() {
+        //     let tmp = Arc::new(qs);
+        //     indices.insert(tmp.clone(), builder.build());
+        //     flat_quad_settings.push(qs);
+        // }
+
+        let built: Vec<(TransposedQuadIndex, SingleQuadrupoleSetting)> = self
+            .indices
+            .into_par_iter()
+            .map(|(qs, builder)| (builder.build(), qs))
+            .collect();
+
+        for (qi, qs) in built.into_iter() {
+            let qa: Arc<SingleQuadrupoleSetting> = Arc::new(qs);
+            indices.insert(qa.clone(), qi);
+            flat_quad_settings.push(qs);
         }
+
         flat_quad_settings.sort_by(|a, b| {
             a.ranges
                 .isolation_mz
@@ -293,15 +361,14 @@ impl QuadSplittedTransposedIndexBuilder {
                 .unwrap()
         });
 
-        let out = QuadSplittedTransposedIndex {
-            indices: indices,
+        QuadSplittedTransposedIndex {
+            indices,
             flat_quad_settings,
-            rt_converter: self.rt_converter,
-            mz_converter: self.mz_converter,
-            im_converter: self.im_converter,
-        };
-
-        out
+            rt_converter: self.rt_converter.unwrap(),
+            mz_converter: self.mz_converter.unwrap(),
+            im_converter: self.im_converter.unwrap(),
+            metadata: self.metadata.unwrap(),
+        }
     }
 }
 
@@ -360,7 +427,7 @@ fn display_opt_peak_bucket_vec(opt_peak_buckets: &[Option<PeakBucket>]) -> Strin
         out.push_str(&format!(
             " - Bucket with max tof: {} {}\n",
             tof_with_max,
-            display_opt_peak_bucket(&opt_peak_buckets[tof_with_max as usize])
+            display_opt_peak_bucket(&opt_peak_buckets[tof_with_max])
         ));
     }
 
@@ -420,11 +487,10 @@ impl TransposedQuadIndex {
 
         self.peak_buckets
             .range(tof_range.0..tof_range.1)
-            .map(move |(tof_index, pb)| {
+            .flat_map(move |(tof_index, pb)| {
                 pb.query_peaks(scan_range, frame_index_range)
-                    .map(move |p| PeakInQuad::from_peak_in_bucket(p, tof_index.clone()))
+                    .map(move |p| PeakInQuad::from_peak_in_bucket(p, *tof_index))
             })
-            .flatten()
         // Coult I just return an Arc<[intensities]> + ...
         // If I made the peak buckets sparse, I could make it ... not be an option.
     }
@@ -468,6 +534,7 @@ impl TransposedQuadIndex {
     }
 }
 
+#[derive(Debug, Clone)]
 struct TransposedQuadIndexBuilder {
     quad_settings: SingleQuadrupoleSetting,
     int_slices: Vec<Vec<u32>>,
@@ -489,6 +556,14 @@ impl TransposedQuadIndexBuilder {
         }
     }
 
+    fn fold(&mut self, other: Self) {
+        self.int_slices.extend(other.int_slices);
+        self.tof_slices.extend(other.tof_slices);
+        self.scan_slices.extend(other.scan_slices);
+        self.frame_indices.extend(other.frame_indices);
+        self.frame_rts.extend(other.frame_rts);
+    }
+
     fn add_frame_slice(
         &mut self,
         int_slice: Vec<u32>,
@@ -508,6 +583,7 @@ impl TransposedQuadIndexBuilder {
     }
 
     fn build(self) -> TransposedQuadIndex {
+        let st = Instant::now();
         let max_tof = *self
             .tof_slices
             .iter()
@@ -526,7 +602,7 @@ impl TransposedQuadIndexBuilder {
         let mut peak_buckets = HashMap::with_capacity((max_tof + 1).try_into().unwrap());
         for (tof, count) in tof_counts.clone().into_iter().enumerate() {
             if count > 0 {
-                let peak_bucket = PeakBucketBuilder::new(count);
+                let peak_bucket = PeakBucketBuilder::new(count, tof as u32);
                 peak_buckets.insert(tof as u32, peak_bucket);
             } else {
                 continue;
@@ -538,15 +614,21 @@ impl TransposedQuadIndexBuilder {
         let mut added_peaks = 0;
 
         // TODO rewrite this as indices instead zipping the slices.
-        for ((((int_slice, tof_slice), scan_slice), frame_index), frame_rt) in self
-            .int_slices
-            .into_iter()
-            .zip(self.tof_slices.into_iter())
-            .zip(self.scan_slices.into_iter())
-            .zip(self.frame_indices.into_iter())
-            .zip(self.frame_rts.into_iter())
-        {
-            let rt = frame_rt as f32;
+        // I could even try to concat + sort + pass ... I would need to implement
+        // 'add peak slice'
+
+        // let mut expanded_frame_rts =
+        //     Vec::with_capacity(self.tof_slices.iter().map(|x| x.len()).sum());
+
+        let aps = Instant::now();
+
+        for slice_ind in 0..self.frame_indices.len() {
+            let int_slice = &self.int_slices[slice_ind];
+            let tof_slice = &self.tof_slices[slice_ind];
+            let scan_slice = &self.scan_slices[slice_ind];
+            // let frame_index = self.frame_indices[slice_ind];
+            let frame_rt = self.frame_rts[slice_ind] as f32;
+
             for ((inten, tof), scan) in int_slice
                 .into_iter()
                 .zip(tof_slice.into_iter())
@@ -555,11 +637,12 @@ impl TransposedQuadIndexBuilder {
                 peak_buckets
                     .get_mut(&tof)
                     .expect("Should have just added it...")
-                    .add_peak(scan, inten, rt);
+                    .add_peak(*scan, *inten, frame_rt);
 
                 added_peaks += 1;
             }
         }
+        let aps = aps.elapsed();
 
         if added_peaks != tot_peaks {
             println!("TransposedQuadIndex::add_frame_slice failed at peak count check, expected: {}, real: {}", tot_peaks, added_peaks);
@@ -581,12 +664,24 @@ impl TransposedQuadIndexBuilder {
             }
         }
 
+        let bb_st = Instant::now();
         let peak_bucket = BTreeMap::from_par_iter(
             peak_buckets
                 .into_par_iter()
                 .map(|(tof, pb)| (tof, pb.build())),
         );
 
+        let bbe = bb_st.elapsed();
+        let elapsed = st.elapsed();
+        info!(
+            "TransposedQuadIndex::add_frame_slice adding peaks took {:#?} for {} peaks",
+            aps, tot_peaks
+        );
+        info!(
+            "TransposedQuadIndex::add_frame_slice building buckets took {:#?}",
+            bbe
+        );
+        info!("TransposedQuadIndex::build took {:#?}", elapsed);
         TransposedQuadIndex {
             quad_settings: self.quad_settings,
             frame_rts: out_rts,
@@ -602,18 +697,27 @@ pub struct PeakInBucket {
     pub retention_time: f32,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum PeakBucketMode {
+    Compressed,
+    Sorted,
+}
+
 #[derive(Debug)]
 struct PeakBucket {
     intensities: Vec<u32>,
     retention_times: Vec<f32>,
     scan_offsets: Vec<usize>,
+    tof_index: u32,
+    mode: PeakBucketMode,
 }
 
 impl Display for PeakBucket {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "PeakBucket: \n    len={},\n    retention_times={},\n    scan_offsets={},\n    intensities={}",
+            "PeakBucket tof={}: \n    len={},\n    retention_times={},\n    scan_offsets={},\n    intensities={}, \n    mode={:?}",
+            self.tof_index,
             self.len(),
             glimpse_vec(
                 &self.retention_times,
@@ -638,7 +742,8 @@ impl Display for PeakBucket {
                     padding: 2,
                     new_line: false
                 })
-            )
+            ),
+            self.mode,
         )
     }
 }
@@ -648,21 +753,36 @@ struct PeakBucketBuilder {
     intensities: Vec<u32>,
     retention_times: Vec<f32>,
     scan_offsets: Vec<usize>,
+    tof_index: u32,
 }
 
 impl PeakBucketBuilder {
-    fn new(capacity: usize) -> Self {
+    fn new(capacity: usize, tof_index: u32) -> Self {
         Self {
             intensities: Vec::with_capacity(capacity),
             retention_times: Vec::with_capacity(capacity),
             scan_offsets: Vec::with_capacity(capacity),
+            tof_index,
         }
+    }
+
+    fn add_slices(&mut self, int_slice: &[u32], rt_slice: &[f32], scan_slice: &[usize]) {
+        self.intensities.extend(int_slice);
+        self.retention_times.extend(rt_slice);
+        self.scan_offsets.extend(scan_slice);
     }
 
     fn add_peak(&mut self, scan_index: usize, intensity: u32, retention_time: f32) {
         self.intensities.push(intensity);
         self.retention_times.push(retention_time);
         self.scan_offsets.push(scan_index);
+    }
+
+    fn fold(&mut self, other: Self) {
+        assert_eq!(self.tof_index, other.tof_index);
+        self.intensities.extend(other.intensities);
+        self.retention_times.extend(other.retention_times);
+        self.scan_offsets.extend(other.scan_offsets);
     }
 
     fn build(mut self) -> PeakBucket {
@@ -674,14 +794,24 @@ impl PeakBucketBuilder {
             &mut self.intensities
         );
         // TODO consider if I really need to compress this.
-
-        let compressed = compress_vec(&self.scan_offsets);
-        let out = PeakBucket {
-            intensities: self.intensities,
-            retention_times: self.retention_times,
-            scan_offsets: compressed,
+        let out = if self.scan_offsets.len() > 1000 {
+            let compressed = compress_vec(&self.scan_offsets);
+            PeakBucket {
+                intensities: self.intensities,
+                retention_times: self.retention_times,
+                scan_offsets: compressed,
+                mode: PeakBucketMode::Compressed,
+                tof_index: self.tof_index,
+            }
+        } else {
+            PeakBucket {
+                intensities: self.intensities,
+                retention_times: self.retention_times,
+                scan_offsets: self.scan_offsets,
+                mode: PeakBucketMode::Sorted,
+                tof_index: self.tof_index,
+            }
         };
-        assert!(out.verify(), "PeakBucket::build failed at verify");
         out
     }
 }
@@ -696,14 +826,78 @@ impl PeakBucket {
         scan_range: Option<(usize, usize)>,
         rt_range: Option<(f32, f32)>,
     ) -> impl Iterator<Item = PeakInBucket> + '_ {
+        match self.mode {
+            PeakBucketMode::Compressed => self
+                .query_peaks_compressed(scan_range, rt_range)
+                .collect::<Vec<PeakInBucket>>()
+                .into_iter(),
+            PeakBucketMode::Sorted => self
+                .query_peaks_sorted(scan_range, rt_range)
+                .collect::<Vec<PeakInBucket>>()
+                .into_iter(),
+        }
+    }
+
+    pub fn query_peaks_sorted(
+        &self,
+        scan_range: Option<(usize, usize)>,
+        rt_range: Option<(f32, f32)>,
+    ) -> impl Iterator<Item = PeakInBucket> + '_ {
+        let (scan_min, scan_max) = match scan_range {
+            Some((scan_low, scan_high)) => (scan_low, scan_high),
+            None => (
+                0,
+                *(self
+                    .scan_offsets
+                    .last()
+                    .expect("It should not be possible to build an empty PeakBucket")),
+            ),
+        };
+
+        // TODO do a binary search if the data is large-ish.
+        let mut start_min = 0;
+        let mut end_max = self.len();
+        while start_min < end_max && self.scan_offsets[start_min] < scan_min {
+            start_min += 1;
+        }
+        while start_min < end_max && self.scan_offsets[end_max - 1] >= scan_max {
+            end_max -= 1;
+        }
+
+        (start_min..end_max)
+            .map(move |x| {
+                let scan_index = self.scan_offsets[x];
+                let retention_time = self.retention_times[x];
+                match rt_range {
+                    Some((low, high)) => {
+                        if retention_time < low || retention_time > high {
+                            return None;
+                        }
+                    }
+                    None => {}
+                }
+                Some(PeakInBucket {
+                    scan_index,
+                    intensity: self.intensities[x],
+                    retention_time,
+                })
+            })
+            .filter_map(|x| x)
+    }
+
+    pub fn query_peaks_compressed(
+        &self,
+        scan_range: Option<(usize, usize)>,
+        rt_range: Option<(f32, f32)>,
+    ) -> impl Iterator<Item = PeakInBucket> + '_ {
         let scan_range = match scan_range {
             Some((scan_low, scan_high)) => {
                 (scan_low..scan_high.min(self.scan_offsets.len() - 1)).into_iter()
             }
             None => 0..self.scan_offsets.len(),
         };
-        let tmp = scan_range
-            .map(move |scan_index| {
+        scan_range
+            .flat_map(move |scan_index| {
                 let peak_index_start = self.scan_offsets[scan_index];
                 let peak_index_end = self.scan_offsets[scan_index + 1];
 
@@ -729,9 +923,7 @@ impl PeakBucket {
                         })
                     })
             })
-            .flatten()
-            .filter_map(|x| x);
-        tmp
+            .filter_map(|x| x)
     }
 
     fn verify(&self) -> bool {
@@ -739,25 +931,43 @@ impl PeakBucket {
             println!("PeakBucket::verify failed at length check");
             return false;
         }
-        match self.scan_offsets.last() {
-            Some(last) => {
-                if *last != self.retention_times.len() {
-                    println!("PeakBucket::verify failed at last scan check, too many scans");
-                    return false;
+        match self.mode {
+            PeakBucketMode::Compressed => {
+                match self.scan_offsets.last() {
+                    Some(last) => {
+                        if *last != self.retention_times.len() {
+                            println!(
+                                "PeakBucket::verify failed at last scan check, in compressed mode."
+                            );
+                            return false;
+                        }
+                    }
+                    None => {
+                        println!("PeakBucket::verify failed at last scan check, no scans");
+                        return false;
+                    }
+                }
+
+                for i in 1..self.scan_offsets.len() {
+                    if self.scan_offsets[i] < self.scan_offsets[i - 1] {
+                        println!("PeakBucket::verify failed at scan order check");
+                        return false;
+                    }
                 }
             }
-            None => {
-                println!("PeakBucket::verify failed at last scan check, no scans");
-                return false;
+            PeakBucketMode::Sorted => {
+                if self.intensities.len() != self.scan_offsets.len() {
+                    println!("PeakBucket::verify failed at length check on sorted mode");
+                    return false;
+                }
+                for i in 1..self.scan_offsets.len() {
+                    if self.scan_offsets[i] < self.scan_offsets[i - 1] {
+                        println!("PeakBucket::verify failed at scan order check");
+                        return false;
+                    }
+                }
             }
-        }
-
-        for i in 1..self.scan_offsets.len() {
-            if self.scan_offsets[i] < self.scan_offsets[i - 1] {
-                println!("PeakBucket::verify failed at scan order check");
-                return false;
-            }
-        }
+        };
 
         true
     }
@@ -788,7 +998,7 @@ impl IndexedData<FragmentGroupIndexQuery, RawPeak> for QuadSplittedTransposedInd
         let out = fragment_query
             .mz_index_ranges
             .iter()
-            .map(|tof_range| {
+            .flat_map(|tof_range| {
                 self.query_peaks(
                     *tof_range,
                     precursor_mz_range,
@@ -798,7 +1008,6 @@ impl IndexedData<FragmentGroupIndexQuery, RawPeak> for QuadSplittedTransposedInd
                 .map(|peak| RawPeak::from(peak))
                 .collect::<Vec<RawPeak>>()
             })
-            .flatten()
             .collect();
 
         // let mut out = Vec::new();

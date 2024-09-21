@@ -98,10 +98,17 @@ impl RawFileIndex {
         elution_group: &crate::models::elution_group::ElutionGroup,
     ) -> PrecursorIndexQuery {
         let rt_range = tol.rt_range(elution_group.rt_seconds);
-        let mobility_range = tol.mobility_range(elution_group.mobility);
         let mz_range = tol.mz_range(elution_group.precursor_mz);
         let quad_range = tol.quad_range(elution_group.precursor_mz, elution_group.precursor_charge);
 
+        let mobility_range = tol.mobility_range(elution_group.mobility);
+        let mobility_range = match mobility_range {
+            Some(mobility_range) => mobility_range,
+            None => (
+                self.meta_converters.lower_im as f32,
+                self.meta_converters.upper_im as f32,
+            ),
+        };
         let mut min_scan_index =
             self.meta_converters.im_converter.invert(mobility_range.0) as usize;
         let mut max_scan_index =
@@ -110,6 +117,14 @@ impl RawFileIndex {
         if min_scan_index > max_scan_index {
             std::mem::swap(&mut min_scan_index, &mut max_scan_index);
         }
+
+        let rt_range = match rt_range {
+            Some(rt_range) => rt_range,
+            None => (
+                self.meta_converters.lower_rt as f32,
+                self.meta_converters.upper_rt as f32,
+            ),
+        };
 
         PrecursorIndexQuery {
             frame_index_range: (

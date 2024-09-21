@@ -1,5 +1,6 @@
 use serde::Serialize;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use super::super::streaming_aggregator::RunningStatsCalculator;
 use crate::models::frames::raw_peak::RawPeak;
@@ -68,22 +69,23 @@ impl Aggregator<RawPeak> for ExtractedIonChromatomobilogram {
     }
 }
 
+// type MappingCollection<T1, T2> = BTreeMap<T1, T2>;
+type MappingCollection<T1, T2> = HashMap<T1, T2>;
+
 #[derive(Debug, Clone)]
 pub struct ChromatomobilogramStats {
     // TODO OPTIMIZE THIS ... as needed.
     // In theory we can optimize this to make a single aggregator struct
     // that shares the weight (intensity), since all will have the same weight
     // and retention times.
-    pub scan_tree: BTreeMap<u32, RunningStatsCalculator>,
-    pub tof_tree: BTreeMap<u32, RunningStatsCalculator>,
+    pub scan_tof_mapping: MappingCollection<u32, (RunningStatsCalculator, RunningStatsCalculator)>,
     pub id: u64,
 }
 
 impl ChromatomobilogramStats {
     pub fn new(id: u64) -> Self {
         Self {
-            scan_tree: BTreeMap::new(),
-            tof_tree: BTreeMap::new(),
+            scan_tof_mapping: MappingCollection::new(),
             id,
         }
     }
@@ -106,19 +108,15 @@ impl Aggregator<RawPeak> for ChromatomobilogramStats {
         let rt_miliseconds = (peak.retention_time * 1000.0) as u32;
 
         // TODO make this macro as well ...
-        self.scan_tree
+        self.scan_tof_mapping
             .entry(rt_miliseconds)
-            .and_modify(|curr| curr.add(peak.scan_index as f64, u64_intensity))
-            .or_insert(RunningStatsCalculator::new(
-                u64_intensity,
-                peak.scan_index as f64,
-            ));
-        self.tof_tree
-            .entry(rt_miliseconds)
-            .and_modify(|curr| curr.add(peak.tof_index as f64, u64_intensity))
-            .or_insert(RunningStatsCalculator::new(
-                u64_intensity,
-                peak.tof_index as f64,
+            .and_modify(|curr| {
+                curr.0.add(peak.scan_index as f64, u64_intensity);
+                curr.1.add(peak.tof_index as f64, u64_intensity);
+            })
+            .or_insert((
+                RunningStatsCalculator::new(u64_intensity, peak.scan_index as f64),
+                RunningStatsCalculator::new(u64_intensity, peak.tof_index as f64),
             ));
     }
 
@@ -127,28 +125,26 @@ impl Aggregator<RawPeak> for ChromatomobilogramStats {
     }
 
     fn finalize(self) -> ChromatomobilogramStatsArrays {
+        let ((scan_means, scan_sds), (tof_means, tof_sds)): (
+            (Vec<f64>, Vec<f64>),
+            (Vec<f64>, Vec<f64>),
+        ) = self
+            .scan_tof_mapping
+            .values()
+            .map(|(scan, tof)| {
+                (
+                    (scan.mean().unwrap(), scan.standard_deviation().unwrap()),
+                    (tof.mean().unwrap(), tof.standard_deviation().unwrap()),
+                )
+            })
+            .unzip();
+
         ChromatomobilogramStatsArrays {
-            retention_time_miliseconds: self.scan_tree.keys().cloned().collect::<Vec<u32>>(),
-            tof_index_means: self
-                .tof_tree
-                .values()
-                .map(|x| x.mean().unwrap())
-                .collect::<Vec<f64>>(),
-            tof_index_sds: self
-                .tof_tree
-                .values()
-                .map(|x| x.standard_deviation().unwrap())
-                .collect::<Vec<f64>>(),
-            scan_index_means: self
-                .scan_tree
-                .values()
-                .map(|x| x.mean().unwrap())
-                .collect::<Vec<f64>>(),
-            scan_index_sds: self
-                .scan_tree
-                .values()
-                .map(|x| x.standard_deviation().unwrap())
-                .collect::<Vec<f64>>(),
+            retention_time_miliseconds: self.scan_tof_mapping.keys().cloned().collect::<Vec<u32>>(),
+            tof_index_means: tof_means,
+            tof_index_sds: tof_sds,
+            scan_index_means: scan_means,
+            scan_index_sds: scan_sds,
         }
     }
 }

@@ -1,0 +1,75 @@
+version: "3"
+
+interval: 100ms
+
+env:
+  PGO_DATA_DIR: tmp/pgo-data
+  BIN_EXTRAS: "--features build-binary --bin timsquery"
+
+dotenv: [".env"]
+
+tasks:
+  default:
+    watch: true
+    sources:
+      - "src/**/*.rs"
+    cmds:
+      - task: build
+      - task: test
+      - task: fmt
+      - task: clippy
+
+  build:
+    cmds:
+      - cargo build $BIN_EXTRAS
+
+  test:
+    cmds:
+      - cargo test
+
+  fmt:
+    cmds:
+      - cargo fmt
+
+  clippy:
+    cmds:
+      - cargo clippy
+
+  bench:
+    requires:
+      vars: [RUST_BACKTRACE, RUST_LOG, TIMS_DATA_FILE]
+    cmds:
+      - cargo bench
+
+  templates:
+    sources:
+      - "src/**/*.rs"
+    cmds:
+      - cargo run $BIN_EXTRAS -- write-template --output-path templates --num-elution-groups 10000
+
+  compiler-versions:
+    requires:
+      vars: [PROFDATA_EXE]
+      # PROFDATA_EXE=/Users/myuser/.rustup/toolchains/{toolchain}/lib/rustlib/{arch-triple}/bin/llvm-profdata
+    cmds:
+      - rustc --version --verbose
+      - cargo --version
+
+  pgo-build:
+    deps: [templates, compiler-versions]
+    requires:
+      vars: [RUST_LOG, TIMS_DATA_FILE, PROFDATA_EXE]
+    cmds:
+      - mkdir -p $PGO_DATA_DIR
+      - rm -rf $PGO_DATA_DIR/*
+      - rm -f ./target/release/timsquery
+      - RUSTFLAGS="-Cprofile-generate=$PGO_DATA_DIR" cargo build --release $BIN_EXTRAS
+      - ./target/release/timsquery query-index --raw-file-path $TIMS_DATA_FILE --tolerance-settings-path "templates/tolerance_settings.json" --elution-groups-path "templates/elution_groups.json" --output-path . --pretty --index transposed-quad-index --aggregator chromato-mobilogram-stat
+      # TODO add more data/run types.
+      # - ./target/release/timsquery mydata2.csv
+      # - ./target/release/timsquery mydata3.csv
+      - ls -lcth $PGO_DATA_DIR
+      - $PROFDATA_EXE merge -o $PGO_DATA_DIR/merged.profdata $PGO_DATA_DIR && ls -lcth $PGO_DATA_DIR
+      - RUSTFLAGS="-Cprofile-use=${PWD}/${PGO_DATA_DIR}/merged.profdata -Cllvm-args=-pgo-warn-missing-function" cargo build $BIN_EXTRAS --release
+      - ./target/release/timsquery  query-index --raw-file-path $TIMS_DATA_FILE --tolerance-settings-path "templates/tolerance_settings.json" --elution-groups-path "templates/elution_groups.json" --output-path . --pretty --index transposed-quad-index --aggregator chromato-mobilogram-stat
+      # TODO make this multi-platform
