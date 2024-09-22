@@ -30,12 +30,12 @@ pub fn scans_matching_quad(
     }
 }
 
-pub fn frame_elems_matching<'a>(
-    frame: &'a Frame,
+pub fn frame_elems_matching(
+    frame: &Frame,
     tof_range: (u32, u32),
     scan_range: (usize, usize),
     quad_range: Option<(f64, f64)>,
-) -> impl Iterator<Item = RawPeak> + 'a {
+) -> impl Iterator<Item = RawPeak> + '_ {
     trace!(
         "frame_elems_matching tof_range: {:?}, scan_range: {:?}, quad_range: {:?}",
         tof_range,

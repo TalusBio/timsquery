@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 /// Explodes the compressed representation of a vector to its
 /// original representation.
 ///
@@ -66,20 +68,18 @@ pub fn compress_vec(input: &[usize]) -> Vec<usize> {
     let max_value = *input.last().unwrap();
     // Here the output is actually max + 2 to account for the 0 value.
     let mut compressed = vec![0; max_value + 2];
-    let mut current_index: usize;
 
     for value in 0..=max_value {
-        // TODO use a less hacky way to find the half step.
-        // Some pattern matching magic will do... later ...
-        let seek = value as f32 + 0.5;
-        let bsearch = input.binary_search_by(|x| (*x as f32).partial_cmp(&seek).unwrap());
-        current_index = match bsearch {
-            Ok(i) => panic!("A half step should never be found"),
-            Err(i) => i,
-        };
+        // Straight up stolen from here: https://stackoverflow.com/a/75790348/4295016
+        let res: usize = input
+            .binary_search_by(|element| match element.cmp(&value) {
+                Ordering::Equal => Ordering::Less,
+                ord => ord,
+            })
+            .unwrap_err();
 
         // Here we add 1 to account for the 0 value.
-        compressed[value + 1] = current_index;
+        compressed[value + 1] = res;
     }
 
     compressed

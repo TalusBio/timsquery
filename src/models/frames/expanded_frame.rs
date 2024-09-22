@@ -100,8 +100,8 @@ fn explode_scan_offsets(scan_offsets: &[usize], offset_val: usize) -> Vec<usize>
     for i in 0..scan_offsets.len() - 1 {
         let start = scan_offsets[i];
         let end = scan_offsets[i + 1];
-        for j in start..end {
-            exploded_offsets[j] = i + offset_val;
+        for pos in exploded_offsets.iter_mut().take(end).skip(start) {
+            *pos = i + offset_val;
         }
     }
     exploded_offsets
@@ -122,9 +122,9 @@ impl ExpandedFrame {
         );
 
         ExpandedFrame {
-            tof_indices: tof_indices,
-            scan_numbers: scan_numbers,
-            intensities: intensities,
+            tof_indices,
+            scan_numbers,
+            intensities,
             frame_index: frame.index,
             rt: frame.rt,
             acquisition_type: frame.acquisition_type,
