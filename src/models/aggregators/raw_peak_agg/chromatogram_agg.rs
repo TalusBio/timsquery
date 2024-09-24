@@ -52,10 +52,6 @@ impl Aggregator<RawPeak> for ExtractedIonChromatomobilogram {
             .or_insert(u64_intensity);
     }
 
-    fn fold(&mut self, other: Self) {
-        panic!("Not Implemented;")
-    }
-
     fn finalize(self) -> ChromatomobilogramVectorArrayTuples {
         ChromatomobilogramVectorArrayTuples {
             scan_indices: self.scan_tree.into_iter().collect(),
@@ -71,6 +67,13 @@ impl Aggregator<RawPeak> for ExtractedIonChromatomobilogram {
 
 // type MappingCollection<T1, T2> = BTreeMap<T1, T2>;
 type MappingCollection<T1, T2> = HashMap<T1, T2>;
+
+#[derive(Debug, Clone)]
+pub struct MultiChromatomobilogramStats {
+    pub scan_tof_mapping:
+        MappingCollection<(usize, u32), (RunningStatsCalculator, RunningStatsCalculator)>,
+    pub id: u64,
+}
 
 #[derive(Debug, Clone)]
 pub struct ChromatomobilogramStats {
@@ -107,7 +110,6 @@ impl Aggregator<RawPeak> for ChromatomobilogramStats {
         let u64_intensity = peak.intensity as u64;
         let rt_miliseconds = (peak.retention_time * 1000.0) as u32;
 
-        // TODO make this macro as well ...
         self.scan_tof_mapping
             .entry(rt_miliseconds)
             .and_modify(|curr| {
@@ -120,15 +122,9 @@ impl Aggregator<RawPeak> for ChromatomobilogramStats {
             ));
     }
 
-    fn fold(&mut self, _other: Self) {
-        panic!("Not Implemented;")
-    }
-
     fn finalize(self) -> ChromatomobilogramStatsArrays {
-        let ((scan_means, scan_sds), (tof_means, tof_sds)): (
-            (Vec<f64>, Vec<f64>),
-            (Vec<f64>, Vec<f64>),
-        ) = self
+        type VecTuple = (Vec<f64>, Vec<f64>);
+        let ((scan_means, scan_sds), (tof_means, tof_sds)): (VecTuple, VecTuple) = self
             .scan_tof_mapping
             .values()
             .map(|(scan, tof)| {

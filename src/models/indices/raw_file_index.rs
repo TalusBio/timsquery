@@ -167,10 +167,10 @@ impl RawFileIndex {
 }
 
 impl IndexedData<FragmentGroupIndexQuery, RawPeak> for RawFileIndex {
-    fn query(&self, fragment_query: &FragmentGroupIndexQuery) -> Option<Vec<RawPeak>> {
+    fn query(&self, fragment_query: &FragmentGroupIndexQuery) -> Vec<RawPeak> {
         let mut out = Vec::new();
         self.apply_on_query(fragment_query, &mut |peak, _| out.push(peak));
-        Some(out)
+        out
     }
 
     fn add_query<O, AG: crate::Aggregator<RawPeak, Output = O>>(

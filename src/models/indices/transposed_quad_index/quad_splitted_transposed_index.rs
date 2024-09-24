@@ -55,7 +55,6 @@ impl QuadSplittedTransposedIndex {
             rt_range,
             precursor_mz_range,
         );
-        // let matching_quads = self.get_matching_quad_settings(precursor_mz_range, scan_range);
         let matching_quads: Vec<SingleQuadrupoleSetting> = self
             .get_matching_quad_settings(precursor_mz_range, scan_range)
             .collect();
@@ -127,7 +126,8 @@ impl QuadSplittedTransposedIndex {
 
         assert!(frame_index_range.0 <= frame_index_range.1);
         assert!(mz_index_range.0 <= mz_index_range.1);
-        // assert!(mobility_index_range.0 <= mobility_index_range.1);
+        // Since mobilities get mixed up bc low scan ranges are high 1/k0, I
+        // Just make sure they are sorted here.
         let mobility_index_range = (
             mobility_index_range.0.min(mobility_index_range.1),
             mobility_index_range.1.max(mobility_index_range.0),
@@ -402,7 +402,7 @@ fn display_opt_peak_bucket_vec(opt_peak_buckets: &[Option<PeakBucket>]) -> Strin
 }
 
 impl IndexedData<FragmentGroupIndexQuery, RawPeak> for QuadSplittedTransposedIndex {
-    fn query(&self, fragment_query: &FragmentGroupIndexQuery) -> Option<Vec<RawPeak>> {
+    fn query(&self, fragment_query: &FragmentGroupIndexQuery) -> Vec<RawPeak> {
         let precursor_mz_range = (
             fragment_query.precursor_query.isolation_mz_range.0 as f64,
             fragment_query.precursor_query.isolation_mz_range.0 as f64,
@@ -412,7 +412,7 @@ impl IndexedData<FragmentGroupIndexQuery, RawPeak> for QuadSplittedTransposedInd
             fragment_query.precursor_query.frame_index_range,
         ));
 
-        let out = fragment_query
+        fragment_query
             .mz_index_ranges
             .iter()
             .flat_map(|tof_range| {
@@ -424,9 +424,7 @@ impl IndexedData<FragmentGroupIndexQuery, RawPeak> for QuadSplittedTransposedInd
                 )
                 .map(RawPeak::from)
             })
-            .collect();
-
-        Some(out)
+            .collect()
     }
 
     fn add_query<O, AG: crate::Aggregator<RawPeak, Output = O>>(
@@ -466,8 +464,8 @@ impl IndexedData<FragmentGroupIndexQuery, RawPeak> for QuadSplittedTransposedInd
         aggregator: &mut [AG],
     ) {
         fragment_queries
-            .iter()
-            .zip(aggregator.iter_mut())
+            .par_iter()
+            .zip(aggregator.par_iter_mut())
             .for_each(|(fragment_query, agg)| {
                 let precursor_mz_range = (
                     fragment_query.precursor_query.isolation_mz_range.0 as f64,
