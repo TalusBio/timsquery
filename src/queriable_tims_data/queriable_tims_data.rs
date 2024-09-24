@@ -1,4 +1,5 @@
 use log::info;
+use rayon::prelude::*;
 use std::rc::Rc;
 use std::time::Instant;
 
@@ -88,12 +89,13 @@ pub fn query_multi_group<'a, ID, TA, TL, QF, AE, OE, AG>(
     tolerance: &'a TL,
     elution_groups: &[ElutionGroup],
     aggregator_factory: &dyn Fn(u64) -> AG,
-) -> Vec<AG>
+) -> Vec<OE>
 where
     AG: Aggregator<AE, Output = OE> + Send + Sync,
     ID: IndexedData<QF, AE>,
     TA: ToleranceAdapter<QF>,
     TL: Tolerance,
+    OE: Send + Sync,
 {
     let start = Instant::now();
     let mut fragment_queries = Vec::with_capacity(elution_groups.len());
@@ -120,7 +122,7 @@ where
         microseconds_per_query
     );
 
-    aggregators
+    aggregators.into_par_iter().map(|x| x.finalize()).collect()
 }
 
 pub fn query_indexed<ID, TA, TL, QF, AE, OE, AG>(

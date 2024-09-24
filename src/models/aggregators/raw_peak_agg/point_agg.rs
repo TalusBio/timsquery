@@ -21,10 +21,6 @@ impl Aggregator<RawPeak> for RawPeakIntensityAggregator {
         self.intensity += peak.intensity as u64;
     }
 
-    fn fold(&mut self, other: Self) {
-        self.intensity += other.intensity;
-    }
-
     fn finalize(self) -> u64 {
         self.intensity
     }
@@ -72,15 +68,6 @@ impl Aggregator<RawPeak> for RawPeakVectorAggregator {
         self.peaks.tofs.push(peak.tof_index);
         self.peaks.intensities.push(peak.intensity);
         self.peaks.retention_times.push(peak.retention_time);
-    }
-
-    fn fold(&mut self, other: Self) {
-        self.peaks.scans.extend(other.peaks.scans);
-        self.peaks.tofs.extend(other.peaks.tofs);
-        self.peaks.intensities.extend(other.peaks.intensities);
-        self.peaks
-            .retention_times
-            .extend(other.peaks.retention_times);
     }
 
     fn finalize(self) -> RawPeakVectorArrays {

@@ -66,13 +66,28 @@ impl Aggregator<RawPeak> for ExtractedIonChromatomobilogram {
 }
 
 // type MappingCollection<T1, T2> = BTreeMap<T1, T2>;
-type MappingCollection<T1, T2> = HashMap<T1, T2>;
+pub type MappingCollection<T1, T2> = HashMap<T1, T2>;
 
 #[derive(Debug, Clone)]
-pub struct MultiChromatomobilogramStats {
-    pub scan_tof_mapping:
-        MappingCollection<(usize, u32), (RunningStatsCalculator, RunningStatsCalculator)>,
-    pub id: u64,
+pub struct ScanTofStatsCalculatorPair {
+    pub scan: RunningStatsCalculator,
+    pub tof: RunningStatsCalculator,
+}
+
+impl ScanTofStatsCalculatorPair {
+    pub fn new(intensity: u64, scan_index: usize, tof_index: u32) -> Self {
+        let scan_index = scan_index as f64;
+        let tof_index = tof_index as f64;
+
+        Self {
+            scan: RunningStatsCalculator::new(intensity, scan_index),
+            tof: RunningStatsCalculator::new(intensity, tof_index),
+        }
+    }
+    pub fn add(&mut self, intensity: u64, scan_index: usize, tof_index: u32) {
+        self.scan.add(scan_index as f64, intensity);
+        self.tof.add(tof_index as f64, intensity);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -81,7 +96,7 @@ pub struct ChromatomobilogramStats {
     // In theory we can optimize this to make a single aggregator struct
     // that shares the weight (intensity), since all will have the same weight
     // and retention times.
-    pub scan_tof_mapping: MappingCollection<u32, (RunningStatsCalculator, RunningStatsCalculator)>,
+    pub scan_tof_mapping: MappingCollection<u32, ScanTofStatsCalculatorPair>,
     pub id: u64,
 }
 
@@ -94,13 +109,35 @@ impl ChromatomobilogramStats {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct ChromatomobilogramStatsArrays {
     pub retention_time_miliseconds: Vec<u32>,
     pub tof_index_means: Vec<f64>,
     pub tof_index_sds: Vec<f64>,
     pub scan_index_means: Vec<f64>,
     pub scan_index_sds: Vec<f64>,
+}
+
+impl ChromatomobilogramStatsArrays {
+    // TODO use default instead of new everywhere ..
+    pub fn new() -> Self {
+        Self {
+            retention_time_miliseconds: Vec::new(),
+            tof_index_means: Vec::new(),
+            tof_index_sds: Vec::new(),
+            scan_index_means: Vec::new(),
+            scan_index_sds: Vec::new(),
+        }
+    }
+
+    pub fn fold(&mut self, other: Self) {
+        self.retention_time_miliseconds
+            .extend(other.retention_time_miliseconds);
+        self.tof_index_means.extend(other.tof_index_means);
+        self.tof_index_sds.extend(other.tof_index_sds);
+        self.scan_index_means.extend(other.scan_index_means);
+        self.scan_index_sds.extend(other.scan_index_sds);
+    }
 }
 
 impl Aggregator<RawPeak> for ChromatomobilogramStats {
@@ -113,12 +150,12 @@ impl Aggregator<RawPeak> for ChromatomobilogramStats {
         self.scan_tof_mapping
             .entry(rt_miliseconds)
             .and_modify(|curr| {
-                curr.0.add(peak.scan_index as f64, u64_intensity);
-                curr.1.add(peak.tof_index as f64, u64_intensity);
+                curr.add(u64_intensity, peak.scan_index, peak.tof_index);
             })
-            .or_insert((
-                RunningStatsCalculator::new(u64_intensity, peak.scan_index as f64),
-                RunningStatsCalculator::new(u64_intensity, peak.tof_index as f64),
+            .or_insert(ScanTofStatsCalculatorPair::new(
+                u64_intensity,
+                peak.scan_index,
+                peak.tof_index,
             ));
     }
 
@@ -127,10 +164,16 @@ impl Aggregator<RawPeak> for ChromatomobilogramStats {
         let ((scan_means, scan_sds), (tof_means, tof_sds)): (VecTuple, VecTuple) = self
             .scan_tof_mapping
             .values()
-            .map(|(scan, tof)| {
+            .map(|pair| {
                 (
-                    (scan.mean().unwrap(), scan.standard_deviation().unwrap()),
-                    (tof.mean().unwrap(), tof.standard_deviation().unwrap()),
+                    (
+                        pair.scan.mean().unwrap(),
+                        pair.scan.standard_deviation().unwrap(),
+                    ),
+                    (
+                        pair.tof.mean().unwrap(),
+                        pair.tof.standard_deviation().unwrap(),
+                    ),
                 )
             })
             .unzip();

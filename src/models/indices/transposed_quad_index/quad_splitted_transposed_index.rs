@@ -441,21 +441,15 @@ impl IndexedData<FragmentGroupIndexQuery, RawPeak> for QuadSplittedTransposedInd
             fragment_query.precursor_query.frame_index_range,
         ));
 
-        fragment_query
-            .mz_index_ranges
-            .iter()
-            .flat_map(|tof_range| {
-                let mut out = Vec::new();
-                self.query_peaks(
-                    *tof_range,
-                    precursor_mz_range,
-                    scan_range,
-                    frame_index_range,
-                )
-                .for_each(|peak| out.push(RawPeak::from(peak)));
-                out
-            })
-            .for_each(|x| aggregator.add(&x));
+        fragment_query.mz_index_ranges.iter().for_each(|tof_range| {
+            self.query_peaks(
+                *tof_range,
+                precursor_mz_range,
+                scan_range,
+                frame_index_range,
+            )
+            .for_each(|peak| aggregator.add(&RawPeak::from(peak)));
+        })
     }
 
     fn add_query_multi_group<O, AG: crate::Aggregator<RawPeak, Output = O>>(
@@ -485,6 +479,104 @@ impl IndexedData<FragmentGroupIndexQuery, RawPeak> for QuadSplittedTransposedInd
             });
     }
 }
+
+// Copy pasting for now ... TODO refactor or delete
+// ============================================================================
+
+impl IndexedData<FragmentGroupIndexQuery, (RawPeak, usize)> for QuadSplittedTransposedIndex {
+    fn query(&self, fragment_query: &FragmentGroupIndexQuery) -> Vec<(RawPeak, usize)> {
+        let precursor_mz_range = (
+            fragment_query.precursor_query.isolation_mz_range.0 as f64,
+            fragment_query.precursor_query.isolation_mz_range.0 as f64,
+        );
+        let scan_range = Some(fragment_query.precursor_query.mobility_index_range);
+        let frame_index_range = Some(FrameRTTolerance::FrameIndex(
+            fragment_query.precursor_query.frame_index_range,
+        ));
+
+        fragment_query
+            .mz_index_ranges
+            .iter()
+            .enumerate()
+            .flat_map(|(ind, tof_range)| {
+                let out: Vec<(RawPeak, usize)> = self
+                    .query_peaks(
+                        *tof_range,
+                        precursor_mz_range,
+                        scan_range,
+                        frame_index_range,
+                    )
+                    .map(|x| (RawPeak::from(x), ind))
+                    .collect();
+
+                out
+            })
+            .collect()
+    }
+
+    fn add_query<O, AG: crate::Aggregator<(RawPeak, usize), Output = O>>(
+        &self,
+        fragment_query: &FragmentGroupIndexQuery,
+        aggregator: &mut AG,
+    ) {
+        let precursor_mz_range = (
+            fragment_query.precursor_query.isolation_mz_range.0 as f64,
+            fragment_query.precursor_query.isolation_mz_range.0 as f64,
+        );
+        let scan_range = Some(fragment_query.precursor_query.mobility_index_range);
+        let frame_index_range = Some(FrameRTTolerance::FrameIndex(
+            fragment_query.precursor_query.frame_index_range,
+        ));
+
+        fragment_query
+            .mz_index_ranges
+            .iter()
+            .enumerate()
+            .for_each(|(ind, tof_range)| {
+                self.query_peaks(
+                    *tof_range,
+                    precursor_mz_range,
+                    scan_range,
+                    frame_index_range,
+                )
+                .for_each(|peak| aggregator.add(&(RawPeak::from(peak), ind)));
+            })
+    }
+
+    fn add_query_multi_group<O, AG: crate::Aggregator<(RawPeak, usize), Output = O>>(
+        &self,
+        fragment_queries: &[FragmentGroupIndexQuery],
+        aggregator: &mut [AG],
+    ) {
+        fragment_queries
+            .par_iter()
+            .zip(aggregator.par_iter_mut())
+            .for_each(|(fragment_query, agg)| {
+                let precursor_mz_range = (
+                    fragment_query.precursor_query.isolation_mz_range.0 as f64,
+                    fragment_query.precursor_query.isolation_mz_range.1 as f64,
+                );
+                assert!(precursor_mz_range.0 <= precursor_mz_range.1);
+                assert!(precursor_mz_range.0 > 0.0);
+                let scan_range = Some(fragment_query.precursor_query.mobility_index_range);
+                let frame_index_range = Some(FrameRTTolerance::FrameIndex(
+                    fragment_query.precursor_query.frame_index_range,
+                ));
+
+                for (ind, tof_range) in fragment_query
+                    .mz_index_ranges
+                    .clone()
+                    .into_iter()
+                    .enumerate()
+                {
+                    self.query_peaks(tof_range, precursor_mz_range, scan_range, frame_index_range)
+                        .for_each(|peak| agg.add(&(RawPeak::from(peak), ind)));
+                }
+            });
+    }
+}
+
+// ============================================================================
 
 impl ToleranceAdapter<FragmentGroupIndexQuery> for QuadSplittedTransposedIndex {
     fn query_from_elution_group(

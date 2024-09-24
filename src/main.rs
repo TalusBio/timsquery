@@ -2,11 +2,10 @@ use std::time::Instant;
 use timsquery::models::elution_group::ElutionGroup;
 use timsquery::queriable_tims_data::queriable_tims_data::query_multi_group;
 use timsquery::traits::tolerance::DefaultTolerance;
-use timsquery::Aggregator;
 use timsquery::{
     models::aggregators::{
-        ChromatomobilogramStats, ExtractedIonChromatomobilogram, RawPeakIntensityAggregator,
-        RawPeakVectorAggregator,
+        ChromatomobilogramStats, ExtractedIonChromatomobilogram, MultiCMGStats,
+        MultiCMGStatsArrays, RawPeakIntensityAggregator, RawPeakVectorAggregator,
     },
     models::indices::raw_file_index::RawFileIndex,
     models::indices::transposed_quad_index::QuadSplittedTransposedIndex,
@@ -146,6 +145,7 @@ pub enum PossibleAggregator {
     RawPeakVectorAggregator,
     ExtractedIonChromatomobilogram,
     ChromatoMobilogramStat,
+    MultiCMGStats,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
@@ -225,19 +225,14 @@ pub fn execute_query(
     macro_rules! execute_query_inner {
         ($index:expr, $agg:expr) => {
             let tmp = query_multi_group(&$index, &$index, &tolerance, &elution_groups, &$agg);
-            // debug!("{:?}", tmp);
 
-            let start = Instant::now();
             let mut out = Vec::with_capacity(tmp.len());
             for (res, eg) in tmp.into_iter().zip(elution_groups) {
                 out.push(ElutionGroupResults {
                     elution_group: eg,
-                    result: res.finalize(),
+                    result: res,
                 });
             }
-            let elapsed = start.elapsed();
-            println!("Finalizing query took {:#?}", elapsed);
-            // info!("{:#?}", out);
 
             let put_path = std::path::Path::new(&output_path).join("results.json");
             std::fs::create_dir_all(put_path.parent().unwrap()).unwrap();
@@ -276,6 +271,10 @@ pub fn execute_query(
                     let aggregator = ExtractedIonChromatomobilogram::new;
                     execute_query_inner!(index, aggregator);
                 }
+                PossibleAggregator::MultiCMGStats => {
+                    let aggregator = MultiCMGStats::new;
+                    execute_query_inner!(index, aggregator);
+                }
             }
         }
         (PossibleIndex::RawFileIndex, aggregator) => {
@@ -296,6 +295,9 @@ pub fn execute_query(
                 PossibleAggregator::ExtractedIonChromatomobilogram => {
                     let aggregator = ExtractedIonChromatomobilogram::new;
                     execute_query_inner!(index, aggregator);
+                }
+                PossibleAggregator::MultiCMGStats => {
+                    panic!("Not Implemented!");
                 }
             }
         }
