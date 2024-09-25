@@ -24,15 +24,47 @@ pub struct TransposedQuadIndex {
     // additional bucketing.
 }
 
+fn display_peak_bucket_map(bucket_map: &BTreeMap<u32, PeakBucket>) -> String {
+    let mut out = String::new();
+
+    let mut max_peaks = 0;
+    let mut tof_with_max = 0;
+    let num_buckets = bucket_map.len();
+    for (i, peak_bucket) in bucket_map.iter() {
+        if max_peaks < peak_bucket.len() {
+            max_peaks = peak_bucket.len();
+            tof_with_max = *i;
+        }
+    }
+
+    out.push_str(&format!(
+        "PeakBuckets: num_buckets: {}, max_peaks: {}, tof_with_max: {}\n",
+        num_buckets, max_peaks, tof_with_max
+    ));
+    for (i, bucket) in bucket_map.iter().take(3) {
+        out.push_str(&format!(" - {}: {}\n", i, bucket));
+    }
+    out.push_str(&format!(" - ... len = {}\n", bucket_map.len()));
+
+    if tof_with_max > 0 {
+        out.push_str(&format!(
+            " - Bucket with max tof: {} {}\n",
+            tof_with_max, &bucket_map[&tof_with_max]
+        ));
+    }
+
+    out
+}
+
 impl Display for TransposedQuadIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "TransposedQuadIndex\n quad_settings: {}\n frame_indices: {}\n frame_rts: {}\n peak_buckets: NOT SHOWING\n",
+            "TransposedQuadIndex\n quad_settings: {}\n frame_indices: {}\n frame_rts: {}\n peak_buckets: {}\n",
             self.quad_settings,
             glimpse_vec(&self.frame_indices, Some(GlimpseConfig { max_items: 10, padding: 2, new_line: true })),
             glimpse_vec(&self.frame_rts, Some(GlimpseConfig { max_items: 10, padding: 2, new_line: true })),
-            // display_opt_peak_bucket_vec(&self.peak_buckets),
+            display_peak_bucket_map(&self.peak_buckets),
         )
     }
 }
@@ -249,9 +281,9 @@ impl TransposedQuadIndexBuilder {
             // Q: is it worth to sort and add peaks in slices?
 
             for ((inten, tof), scan) in int_slice
-                .into_iter()
-                .zip(tof_slice.into_iter())
-                .zip(scan_slice.into_iter())
+                .iter()
+                .zip(tof_slice.iter())
+                .zip(scan_slice.iter())
             {
                 peak_buckets
                     .get_mut(tof)

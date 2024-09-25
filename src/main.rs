@@ -5,7 +5,7 @@ use timsquery::traits::tolerance::DefaultTolerance;
 use timsquery::{
     models::aggregators::{
         ChromatomobilogramStats, ExtractedIonChromatomobilogram, MultiCMGStats,
-        MultiCMGStatsArrays, RawPeakIntensityAggregator, RawPeakVectorAggregator,
+        RawPeakIntensityAggregator, RawPeakVectorAggregator,
     },
     models::indices::raw_file_index::RawFileIndex,
     models::indices::transposed_quad_index::QuadSplittedTransposedIndex,

@@ -88,6 +88,10 @@ impl ScanTofStatsCalculatorPair {
         self.scan.add(scan_index as f64, intensity);
         self.tof.add(tof_index as f64, intensity);
     }
+
+    pub fn weight(&self) -> u64 {
+        self.scan.weight()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -116,6 +120,7 @@ pub struct ChromatomobilogramStatsArrays {
     pub tof_index_sds: Vec<f64>,
     pub scan_index_means: Vec<f64>,
     pub scan_index_sds: Vec<f64>,
+    pub intensities: Vec<u64>,
 }
 
 impl ChromatomobilogramStatsArrays {
@@ -127,6 +132,7 @@ impl ChromatomobilogramStatsArrays {
             tof_index_sds: Vec::new(),
             scan_index_means: Vec::new(),
             scan_index_sds: Vec::new(),
+            intensities: Vec::new(),
         }
     }
 
@@ -137,6 +143,7 @@ impl ChromatomobilogramStatsArrays {
         self.tof_index_sds.extend(other.tof_index_sds);
         self.scan_index_means.extend(other.scan_index_means);
         self.scan_index_sds.extend(other.scan_index_sds);
+        self.intensities.extend(other.intensities);
     }
 }
 
@@ -161,22 +168,29 @@ impl Aggregator<RawPeak> for ChromatomobilogramStats {
 
     fn finalize(self) -> ChromatomobilogramStatsArrays {
         type VecTuple = (Vec<f64>, Vec<f64>);
-        let ((scan_means, scan_sds), (tof_means, tof_sds)): (VecTuple, VecTuple) = self
+        type OutVecTubples = ((VecTuple, VecTuple), Vec<u64>);
+        let ((scan_data, tof_data), intensities): OutVecTubples = self
             .scan_tof_mapping
             .values()
             .map(|pair| {
                 (
                     (
-                        pair.scan.mean().unwrap(),
-                        pair.scan.standard_deviation().unwrap(),
+                        (
+                            pair.scan.mean().unwrap(),
+                            pair.scan.standard_deviation().unwrap(),
+                        ),
+                        (
+                            pair.tof.mean().unwrap(),
+                            pair.tof.standard_deviation().unwrap(),
+                        ),
                     ),
-                    (
-                        pair.tof.mean().unwrap(),
-                        pair.tof.standard_deviation().unwrap(),
-                    ),
+                    pair.tof.weight(),
                 )
             })
             .unzip();
+
+        let (scan_means, scan_sds) = scan_data;
+        let (tof_means, tof_sds) = tof_data;
 
         ChromatomobilogramStatsArrays {
             retention_time_miliseconds: self.scan_tof_mapping.keys().cloned().collect::<Vec<u32>>(),
@@ -184,6 +198,7 @@ impl Aggregator<RawPeak> for ChromatomobilogramStats {
             tof_index_sds: tof_sds,
             scan_index_means: scan_means,
             scan_index_sds: scan_sds,
+            intensities,
         }
     }
 }

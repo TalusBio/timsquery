@@ -81,6 +81,10 @@ impl RunningStatsCalculator {
         };
         Ok(variance.sqrt())
     }
+
+    pub fn weight(&self) -> u64 {
+        self.weight
+    }
 }
 
 #[cfg(test)]

@@ -61,6 +61,7 @@ impl Aggregator<(RawPeak, usize)> for MultiCMGStats {
                         .push(scan_tof_mapping.tof.mean().unwrap());
                     curr.tof_index_sds
                         .push(scan_tof_mapping.tof.standard_deviation().unwrap());
+                    curr.intensities.push(scan_tof_mapping.tof.weight());
                 })
                 .or_insert_with(|| {
                     let mut out = ChromatomobilogramStatsArrays::new();
@@ -73,6 +74,7 @@ impl Aggregator<(RawPeak, usize)> for MultiCMGStats {
                         .push(scan_tof_mapping.tof.mean().unwrap());
                     out.tof_index_sds
                         .push(scan_tof_mapping.tof.standard_deviation().unwrap());
+                    out.intensities.push(scan_tof_mapping.tof.weight());
                     out
                 });
         }

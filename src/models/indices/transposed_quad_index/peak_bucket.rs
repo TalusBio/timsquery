@@ -83,6 +83,10 @@ impl PeakBucketBuilder {
         self.intensities.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.intensities.is_empty()
+    }
+
     pub fn add_peak(&mut self, scan_index: usize, intensity: u32, retention_time: f32) {
         self.intensities.push(intensity);
         self.retention_times.push(retention_time);
@@ -125,6 +129,10 @@ impl PeakBucketBuilder {
 impl PeakBucket {
     pub fn len(&self) -> usize {
         self.intensities.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.intensities.is_empty()
     }
 
     pub fn query_peaks(
@@ -192,9 +200,7 @@ impl PeakBucket {
         rt_range: Option<(f32, f32)>,
     ) -> impl Iterator<Item = PeakInBucket> + '_ {
         let scan_range = match scan_range {
-            Some((scan_low, scan_high)) => {
-                (scan_low..scan_high.min(self.scan_offsets.len() - 1)).into_iter()
-            }
+            Some((scan_low, scan_high)) => scan_low..scan_high.min(self.scan_offsets.len() - 1),
             None => 0..self.scan_offsets.len(),
         };
         scan_range
@@ -219,7 +225,7 @@ impl PeakBucket {
                     })
                 })
             })
-            .filter_map(|x| x)
+            .flatten()
     }
 
     fn verify(&self) -> bool {

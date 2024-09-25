@@ -1,4 +1,3 @@
-use super::peak_bucket::PeakBucket;
 use super::quad_index::{
     FrameRTTolerance, PeakInQuad, TransposedQuadIndex, TransposedQuadIndexBuilder,
 };
@@ -165,7 +164,7 @@ impl Display for QuadSplittedTransposedIndex {
         let mut disp_str = String::new();
         disp_str.push_str("QuadSplittedTransposedIndex\n");
 
-        disp_str.push_str(&format!("rt_converter: ... not showing ...\n",));
+        disp_str.push_str("rt_converter: ... not showing ...\n");
         disp_str.push_str(&format!("mz_converter: {:?}\n", self.mz_converter));
         disp_str.push_str(&format!("im_converter: {:?}\n", self.im_converter));
         disp_str.push_str("flat_quad_settings: \n");
@@ -348,57 +347,6 @@ impl QuadSplittedTransposedIndexBuilder {
             metadata: self.metadata.unwrap(),
         }
     }
-}
-
-// TODO rewrite for the new data structure ... (btree instead of slice of optional)
-fn display_opt_peak_bucket(opt_peak_bucket: &Option<PeakBucket>) -> String {
-    match opt_peak_bucket {
-        Some(peak_bucket) => format!("{}", peak_bucket),
-        None => "None".to_string(),
-    }
-}
-
-fn display_opt_peak_bucket_vec(opt_peak_buckets: &[Option<PeakBucket>]) -> String {
-    let mut out = String::new();
-    let num_none = opt_peak_buckets.iter().filter(|x| x.is_none()).count();
-    let num_some = opt_peak_buckets.iter().filter(|x| x.is_some()).count();
-
-    let mut max_peaks = 0;
-    let mut tof_with_max = 0;
-    for (i, opt_peak_bucket) in opt_peak_buckets.iter().enumerate() {
-        if let Some(peak_bucket) = opt_peak_bucket {
-            if max_peaks < peak_bucket.len() {
-                max_peaks = peak_bucket.len();
-                tof_with_max = i;
-            }
-        }
-    }
-
-    out.push_str(&format!(
-        "PeakBuckets: num_none: {}, num_some: {}, max_peaks: {}, tof_with_max: {}\n",
-        num_none, num_some, max_peaks, tof_with_max
-    ));
-    for (i, opt_peak_bucket) in opt_peak_buckets.iter().enumerate() {
-        out.push_str(&format!(
-            " - {}: {}\n",
-            i,
-            display_opt_peak_bucket(opt_peak_bucket)
-        ));
-        if i > 3 {
-            out.push_str(&format!(" - ... len = {}\n", opt_peak_buckets.len()));
-            break;
-        }
-    }
-
-    if tof_with_max > 0 {
-        out.push_str(&format!(
-            " - Bucket with max tof: {} {}\n",
-            tof_with_max,
-            display_opt_peak_bucket(&opt_peak_buckets[tof_with_max])
-        ));
-    }
-
-    out
 }
 
 impl IndexedData<FragmentGroupIndexQuery, RawPeak> for QuadSplittedTransposedIndex {
