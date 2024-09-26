@@ -1,6 +1,7 @@
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
+use std::collections::HashMap;
 
 use std::hint::black_box;
 use timsquery::{
@@ -35,7 +36,7 @@ fn get_file_from_env() -> (String, String) {
 }
 
 const NUM_ELUTION_GROUPS: usize = 500;
-fn build_elution_groups(raw_file_path: String) -> Vec<ElutionGroup> {
+fn build_elution_groups(raw_file_path: String) -> Vec<ElutionGroup<u64>> {
     const NUM_FRAGMENTS: usize = 10;
     const MAX_RT: f32 = 22.0 * 60.0;
     const MAX_MOBILITY: f32 = 1.5;
@@ -43,7 +44,7 @@ fn build_elution_groups(raw_file_path: String) -> Vec<ElutionGroup> {
     const MAX_MZ: f64 = 1000.0;
     const MIN_MZ: f64 = 300.0;
 
-    let mut out_egs: Vec<ElutionGroup> = Vec::with_capacity(NUM_ELUTION_GROUPS);
+    let mut out_egs: Vec<ElutionGroup<u64>> = Vec::with_capacity(NUM_ELUTION_GROUPS);
     let mut rng = ChaCha8Rng::seed_from_u64(43u64);
 
     for i in 1..NUM_ELUTION_GROUPS {
@@ -52,15 +53,12 @@ fn build_elution_groups(raw_file_path: String) -> Vec<ElutionGroup> {
         let mobility = rng.gen::<f32>() * (MAX_MOBILITY - MIN_MOBILITY) + MIN_MOBILITY;
         let mz = rng.gen::<f64>() * (MAX_MZ - MIN_MZ) + MIN_MZ;
 
-        let mut fragment_mzs = Vec::with_capacity(NUM_FRAGMENTS);
-        let mut fragment_charges = Vec::with_capacity(NUM_FRAGMENTS);
+        let mut fragment_mzs = HashMap::with_capacity(NUM_FRAGMENTS);
 
-        for _ in 0..NUM_FRAGMENTS {
+        for ii in 0..NUM_FRAGMENTS {
             let fragment_mz = rng.gen::<f64>() * (MAX_MZ - MIN_MZ) + MIN_MZ;
             // let fragment_charge = rng.gen::<u8>() * 3 + 1;
-            let fragment_charge = 1;
-            fragment_mzs.push(fragment_mz);
-            fragment_charges.push(fragment_charge);
+            fragment_mzs.insert(ii as u64, fragment_mz);
         }
 
         // rand u8 is number from 0-255 ... which is not amazing for us ...
@@ -73,8 +71,7 @@ fn build_elution_groups(raw_file_path: String) -> Vec<ElutionGroup> {
             mobility,
             precursor_mz: mz,
             precursor_charge,
-            fragment_mzs: Some(fragment_mzs),
-            fragment_charges: Some(fragment_charges),
+            fragment_mzs,
         });
     }
     out_egs
@@ -121,7 +118,7 @@ macro_rules! add_bench_random {
                     )
                 },
                 |(index, query_groups, tolerance)| {
-                    let local_lambda = |elution_group: &ElutionGroup| {
+                    let local_lambda = |elution_group: &ElutionGroup<u64>| {
                         query_indexed(
                             &index,
                             &RawPeakIntensityAggregator::new,

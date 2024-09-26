@@ -5,7 +5,7 @@ pub use crate::queriable_tims_data::queriable_tims_data::QueriableTimsData;
 // Re-export traits
 pub use crate::traits::aggregator::Aggregator;
 pub use crate::traits::indexed_data::IndexedData;
-pub use crate::traits::tolerance::{Tolerance, ToleranceAdapter};
+pub use crate::traits::tolerance::{HasIntegerID, Tolerance, ToleranceAdapter};
 
 // Re-export utility functions
 pub use crate::utils::sorting::sort_multiple_by;

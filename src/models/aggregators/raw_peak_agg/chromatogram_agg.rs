@@ -1,10 +1,12 @@
+use super::super::streaming_aggregator::RunningStatsCalculator;
+use crate::models::frames::raw_peak::RawPeak;
+use crate::sort_by_indices_multi;
+use crate::traits::aggregator::Aggregator;
+use crate::utils::sorting::argsort_by;
+
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
-
-use super::super::streaming_aggregator::RunningStatsCalculator;
-use crate::models::frames::raw_peak::RawPeak;
-use crate::traits::aggregator::Aggregator;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ExtractedIonChromatomobilogram {
@@ -144,6 +146,19 @@ impl ChromatomobilogramStatsArrays {
         self.scan_index_means.extend(other.scan_index_means);
         self.scan_index_sds.extend(other.scan_index_sds);
         self.intensities.extend(other.intensities);
+    }
+
+    pub fn sort_by_rt(&mut self) {
+        let mut indices = argsort_by(&self.retention_time_miliseconds, |x| *x);
+        sort_by_indices_multi!(
+            &mut indices,
+            &mut self.retention_time_miliseconds,
+            &mut self.tof_index_means,
+            &mut self.tof_index_sds,
+            &mut self.scan_index_means,
+            &mut self.scan_index_sds,
+            &mut self.intensities
+        );
     }
 }
 

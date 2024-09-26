@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::hash::Hash;
+
 #[derive(Debug, Clone)]
 pub struct PrecursorIndexQuery {
     pub frame_index_range: (usize, usize),
@@ -7,8 +10,8 @@ pub struct PrecursorIndexQuery {
 }
 
 #[derive(Debug, Clone)]
-pub struct FragmentGroupIndexQuery {
-    pub mz_index_ranges: Vec<(u32, u32)>,
+pub struct FragmentGroupIndexQuery<FH: Clone + Eq + Hash + Send + Sync> {
+    pub mz_index_ranges: HashMap<FH, (u32, u32)>,
     pub precursor_query: PrecursorIndexQuery,
 }
 

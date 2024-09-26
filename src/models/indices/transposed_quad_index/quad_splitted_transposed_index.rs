@@ -12,11 +12,14 @@ use crate::utils::compress_explode::explode_vec;
 use crate::utils::display::{glimpse_vec, GlimpseConfig};
 use crate::ToleranceAdapter;
 
+use crate::models::elution_group::ElutionGroup;
 use log::{debug, info, trace};
 use rayon::prelude::*;
+use serde::Serialize;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt::Display;
+use std::hash::Hash;
 use std::sync::Arc;
 use std::time::Instant;
 use timsrust::converters::{
@@ -92,11 +95,11 @@ impl QuadSplittedTransposedIndex {
             .cloned()
     }
 
-    fn queries_from_elution_elements_impl(
+    fn queries_from_elution_elements_impl<FH: Clone + Eq + Serialize + Hash + Send + Sync>(
         &self,
         tol: &dyn crate::traits::tolerance::Tolerance,
-        elution_group: &crate::models::elution_group::ElutionGroup,
-    ) -> FragmentGroupIndexQuery {
+        elution_group: &crate::models::elution_group::ElutionGroup<FH>,
+    ) -> FragmentGroupIndexQuery<FH> {
         let rt_range = tol.rt_range(elution_group.rt_seconds);
         let mobility_range = tol.mobility_range(elution_group.mobility);
         let precursor_mz_range = tol.mz_range(elution_group.precursor_mz);
@@ -139,18 +142,20 @@ impl QuadSplittedTransposedIndex {
             isolation_mz_range: quad_range,
         };
 
-        // TODO: change this unwrap and use explicitly the lack of fragment mzs.
-        // Does that mean its onlyt a precursor query?
-        // Why is it an option?
-        let fragment_mzs = elution_group.fragment_mzs.as_ref().unwrap();
-        let mut fqs = Vec::with_capacity(fragment_mzs.len());
-        for mz_range in fragment_mzs {
-            let mz_range = tol.mz_range(*mz_range);
-            fqs.push((
-                self.mz_converter.invert(mz_range.0) as u32,
-                self.mz_converter.invert(mz_range.1) as u32,
-            ));
-        }
+        let fqs = elution_group
+            .fragment_mzs
+            .iter()
+            .map(|(k, v)| {
+                let mz_range = tol.mz_range(*v);
+                (
+                    k.clone(),
+                    (
+                        self.mz_converter.invert(mz_range.0) as u32,
+                        self.mz_converter.invert(mz_range.1) as u32,
+                    ),
+                )
+            })
+            .collect();
 
         FragmentGroupIndexQuery {
             mz_index_ranges: fqs,
@@ -349,8 +354,10 @@ impl QuadSplittedTransposedIndexBuilder {
     }
 }
 
-impl IndexedData<FragmentGroupIndexQuery, RawPeak> for QuadSplittedTransposedIndex {
-    fn query(&self, fragment_query: &FragmentGroupIndexQuery) -> Vec<RawPeak> {
+impl<FH: Hash + Copy + Clone + Serialize + Eq + Send + Sync>
+    IndexedData<FragmentGroupIndexQuery<FH>, RawPeak> for QuadSplittedTransposedIndex
+{
+    fn query(&self, fragment_query: &FragmentGroupIndexQuery<FH>) -> Vec<RawPeak> {
         let precursor_mz_range = (
             fragment_query.precursor_query.isolation_mz_range.0 as f64,
             fragment_query.precursor_query.isolation_mz_range.0 as f64,
@@ -363,7 +370,7 @@ impl IndexedData<FragmentGroupIndexQuery, RawPeak> for QuadSplittedTransposedInd
         fragment_query
             .mz_index_ranges
             .iter()
-            .flat_map(|tof_range| {
+            .flat_map(|(_, tof_range)| {
                 self.query_peaks(
                     *tof_range,
                     precursor_mz_range,
@@ -377,7 +384,7 @@ impl IndexedData<FragmentGroupIndexQuery, RawPeak> for QuadSplittedTransposedInd
 
     fn add_query<O, AG: crate::Aggregator<RawPeak, Output = O>>(
         &self,
-        fragment_query: &FragmentGroupIndexQuery,
+        fragment_query: &FragmentGroupIndexQuery<FH>,
         aggregator: &mut AG,
     ) {
         let precursor_mz_range = (
@@ -389,20 +396,23 @@ impl IndexedData<FragmentGroupIndexQuery, RawPeak> for QuadSplittedTransposedInd
             fragment_query.precursor_query.frame_index_range,
         ));
 
-        fragment_query.mz_index_ranges.iter().for_each(|tof_range| {
-            self.query_peaks(
-                *tof_range,
-                precursor_mz_range,
-                scan_range,
-                frame_index_range,
-            )
-            .for_each(|peak| aggregator.add(&RawPeak::from(peak)));
-        })
+        fragment_query
+            .mz_index_ranges
+            .iter()
+            .for_each(|(_, tof_range)| {
+                self.query_peaks(
+                    *tof_range,
+                    precursor_mz_range,
+                    scan_range,
+                    frame_index_range,
+                )
+                .for_each(|peak| aggregator.add(&RawPeak::from(peak)));
+            })
     }
 
     fn add_query_multi_group<O, AG: crate::Aggregator<RawPeak, Output = O>>(
         &self,
-        fragment_queries: &[FragmentGroupIndexQuery],
+        fragment_queries: &[FragmentGroupIndexQuery<FH>],
         aggregator: &mut [AG],
     ) {
         fragment_queries
@@ -420,7 +430,7 @@ impl IndexedData<FragmentGroupIndexQuery, RawPeak> for QuadSplittedTransposedInd
                     fragment_query.precursor_query.frame_index_range,
                 ));
 
-                for tof_range in fragment_query.mz_index_ranges.clone().into_iter() {
+                for (_, tof_range) in fragment_query.mz_index_ranges.clone().into_iter() {
                     self.query_peaks(tof_range, precursor_mz_range, scan_range, frame_index_range)
                         .for_each(|peak| agg.add(&RawPeak::from(peak)));
                 }
@@ -431,8 +441,10 @@ impl IndexedData<FragmentGroupIndexQuery, RawPeak> for QuadSplittedTransposedInd
 // Copy pasting for now ... TODO refactor or delete
 // ============================================================================
 
-impl IndexedData<FragmentGroupIndexQuery, (RawPeak, usize)> for QuadSplittedTransposedIndex {
-    fn query(&self, fragment_query: &FragmentGroupIndexQuery) -> Vec<(RawPeak, usize)> {
+impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
+    IndexedData<FragmentGroupIndexQuery<FH>, (RawPeak, usize)> for QuadSplittedTransposedIndex
+{
+    fn query(&self, fragment_query: &FragmentGroupIndexQuery<FH>) -> Vec<(RawPeak, usize)> {
         let precursor_mz_range = (
             fragment_query.precursor_query.isolation_mz_range.0 as f64,
             fragment_query.precursor_query.isolation_mz_range.0 as f64,
@@ -446,7 +458,7 @@ impl IndexedData<FragmentGroupIndexQuery, (RawPeak, usize)> for QuadSplittedTran
             .mz_index_ranges
             .iter()
             .enumerate()
-            .flat_map(|(ind, tof_range)| {
+            .flat_map(|(ind, (_, tof_range))| {
                 let out: Vec<(RawPeak, usize)> = self
                     .query_peaks(
                         *tof_range,
@@ -464,7 +476,7 @@ impl IndexedData<FragmentGroupIndexQuery, (RawPeak, usize)> for QuadSplittedTran
 
     fn add_query<O, AG: crate::Aggregator<(RawPeak, usize), Output = O>>(
         &self,
-        fragment_query: &FragmentGroupIndexQuery,
+        fragment_query: &FragmentGroupIndexQuery<FH>,
         aggregator: &mut AG,
     ) {
         let precursor_mz_range = (
@@ -480,7 +492,7 @@ impl IndexedData<FragmentGroupIndexQuery, (RawPeak, usize)> for QuadSplittedTran
             .mz_index_ranges
             .iter()
             .enumerate()
-            .for_each(|(ind, tof_range)| {
+            .for_each(|(ind, (_, tof_range))| {
                 self.query_peaks(
                     *tof_range,
                     precursor_mz_range,
@@ -493,7 +505,7 @@ impl IndexedData<FragmentGroupIndexQuery, (RawPeak, usize)> for QuadSplittedTran
 
     fn add_query_multi_group<O, AG: crate::Aggregator<(RawPeak, usize), Output = O>>(
         &self,
-        fragment_queries: &[FragmentGroupIndexQuery],
+        fragment_queries: &[FragmentGroupIndexQuery<FH>],
         aggregator: &mut [AG],
     ) {
         fragment_queries
@@ -511,7 +523,7 @@ impl IndexedData<FragmentGroupIndexQuery, (RawPeak, usize)> for QuadSplittedTran
                     fragment_query.precursor_query.frame_index_range,
                 ));
 
-                for (ind, tof_range) in fragment_query
+                for (ind, (_fh, tof_range)) in fragment_query
                     .mz_index_ranges
                     .clone()
                     .into_iter()
@@ -526,12 +538,15 @@ impl IndexedData<FragmentGroupIndexQuery, (RawPeak, usize)> for QuadSplittedTran
 
 // ============================================================================
 
-impl ToleranceAdapter<FragmentGroupIndexQuery> for QuadSplittedTransposedIndex {
+impl<FH: Copy + Clone + Serialize + Eq + Hash + Send + Sync>
+    ToleranceAdapter<FragmentGroupIndexQuery<FH>, ElutionGroup<FH>>
+    for QuadSplittedTransposedIndex
+{
     fn query_from_elution_group(
         &self,
         tol: &dyn crate::traits::tolerance::Tolerance,
-        elution_group: &crate::models::elution_group::ElutionGroup,
-    ) -> FragmentGroupIndexQuery {
+        elution_group: &ElutionGroup<FH>,
+    ) -> FragmentGroupIndexQuery<FH> {
         self.queries_from_elution_elements_impl(tol, elution_group)
     }
 }

@@ -79,6 +79,10 @@ impl Aggregator<(RawPeak, usize)> for MultiCMGStats {
                 });
         }
 
+        for (_k, v) in transition_stats.iter_mut() {
+            v.sort_by_rt();
+        }
+
         MultiCMGStatsArrays {
             transition_stats,
             id: self.id,

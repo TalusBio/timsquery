@@ -1,8 +1,5 @@
 use core::f32;
-
 use serde::{Deserialize, Serialize};
-
-use crate::models::elution_group::ElutionGroup;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MzToleramce {
@@ -116,6 +113,12 @@ impl Tolerance for DefaultTolerance {
     }
 }
 
-pub trait ToleranceAdapter<QF> {
-    fn query_from_elution_group(&self, tol: &dyn Tolerance, elution_group: &ElutionGroup) -> QF;
+// TODO decide whether to kill this one or to change the interrface
+// and how to propagate identifiers.
+pub trait HasIntegerID {
+    fn get_id(&self) -> u64;
+}
+
+pub trait ToleranceAdapter<QF, T: HasIntegerID> {
+    fn query_from_elution_group(&self, tol: &dyn Tolerance, elution_group: &T) -> QF;
 }

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::Instant;
 use timsquery::models::elution_group::ElutionGroup;
 use timsquery::queriable_tims_data::queriable_tims_data::query_multi_group;
@@ -54,7 +55,7 @@ fn main_write_template(args: WriteTemplateArgs) {
     );
 }
 
-fn template_elution_groups(num: usize) -> Vec<ElutionGroup> {
+fn template_elution_groups(num: usize) -> Vec<ElutionGroup<u64>> {
     let mut egs = Vec::with_capacity(num);
 
     let min_mz = 400.0;
@@ -73,8 +74,8 @@ fn template_elution_groups(num: usize) -> Vec<ElutionGroup> {
         let mobility = min_mobility + (i as f32 * mobility_step);
         let mz = min_mz + (i as f64 * mz_step);
         let precursor_charge = 2;
-        let fragment_mzs = Some((0..10).map(|x| mz + x as f64).collect::<Vec<f64>>());
-        let fragment_charges = Some(vec![precursor_charge]);
+        let fragment_mzs = (0..10).map(|x| (x as u64, mz + x as f64));
+        let fragment_mzs = HashMap::from_iter(fragment_mzs);
         egs.push(ElutionGroup {
             id: i as u64,
             rt_seconds: rt,
@@ -82,7 +83,6 @@ fn template_elution_groups(num: usize) -> Vec<ElutionGroup> {
             precursor_mz: mz,
             precursor_charge,
             fragment_mzs,
-            fragment_charges,
         });
     }
     egs
@@ -99,7 +99,7 @@ fn main_query_index(args: QueryIndexArgs) {
 
     let tolerance_settings: DefaultTolerance =
         serde_json::from_str(&std::fs::read_to_string(&tolerance_settings_path).unwrap()).unwrap();
-    let elution_groups: Vec<ElutionGroup> =
+    let elution_groups: Vec<ElutionGroup<u64>> =
         serde_json::from_str(&std::fs::read_to_string(&elution_groups_path).unwrap()).unwrap();
 
     let index_use = match (index_use, elution_groups.len() > 10) {
@@ -207,7 +207,7 @@ enum Commands {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ElutionGroupResults<T: Serialize> {
-    elution_group: ElutionGroup,
+    elution_group: ElutionGroup<u64>,
     result: T,
 }
 
@@ -216,7 +216,7 @@ pub fn execute_query(
     aggregator: PossibleAggregator,
     raw_file_path: String,
     tolerance: DefaultTolerance,
-    elution_groups: Vec<ElutionGroup>,
+    elution_groups: Vec<ElutionGroup<u64>>,
     args: QueryIndexArgs,
 ) {
     let output_path = args.output_path;

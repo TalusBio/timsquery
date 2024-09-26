@@ -1,18 +1,21 @@
 use std::sync::Arc;
 
+use crate::models::frames::raw_frames::frame_elems_matching;
+use crate::models::frames::raw_peak::RawPeak;
+use crate::models::queries::{FragmentGroupIndexQuery, NaturalPrecursorQuery, PrecursorIndexQuery};
+use crate::traits::aggregator::Aggregator;
+use crate::traits::indexed_data::IndexedData;
+use crate::ElutionGroup;
+use crate::ToleranceAdapter;
+use log::trace;
 use rayon::iter::ParallelIterator;
+use serde::Serialize;
+use std::fmt::Debug;
+use std::hash::Hash;
 use timsrust::converters::ConvertableDomain;
 use timsrust::readers::{FrameReader, FrameReaderError, MetadataReader};
 use timsrust::TimsRustError;
 use timsrust::{Frame, Metadata, QuadrupoleSettings};
-// use timsrust::io::;
-
-use crate::models::frames::raw_frames::frame_elems_matching;
-use crate::models::frames::raw_peak::RawPeak;
-use crate::models::queries::{FragmentGroupIndexQuery, NaturalPrecursorQuery, PrecursorIndexQuery};
-use crate::traits::indexed_data::IndexedData;
-use crate::ToleranceAdapter;
-use log::trace;
 
 pub struct RawFileIndex {
     file_reader: FrameReader,
@@ -53,9 +56,14 @@ impl RawFileIndex {
         }
     }
 
-    fn apply_on_query<'c, 'b: 'c, 'a: 'b>(
+    fn apply_on_query<
+        'c,
+        'b: 'c,
+        'a: 'b,
+        FH: Clone + Eq + Serialize + Hash + Debug + Send + Sync,
+    >(
         &'a self,
-        fqs: &'b FragmentGroupIndexQuery,
+        fqs: &'b FragmentGroupIndexQuery<FH>,
         fun: &'c mut dyn for<'r> FnMut(RawPeak, Arc<QuadrupoleSettings>),
     ) {
         trace!("RawFileIndex::apply_on_query");
@@ -69,7 +77,7 @@ impl RawFileIndex {
         let pq = &fqs.precursor_query;
         let iso_mz_range = pq.isolation_mz_range;
         for frame in frames {
-            for tof_range in fqs.mz_index_ranges.iter() {
+            for (_, tof_range) in fqs.mz_index_ranges.iter() {
                 let scan_range = pq.mobility_index_range;
                 let peaks = frame_elems_matching(
                     &frame,
@@ -92,10 +100,10 @@ impl RawFileIndex {
         self.file_reader.parallel_filter(lambda_use)
     }
 
-    fn query_from_elution_group_impl(
+    fn query_from_elution_group_impl<FH: Clone + Eq + Serialize + Hash + Send + Sync>(
         &self,
         tol: &dyn crate::traits::tolerance::Tolerance,
-        elution_group: &crate::models::elution_group::ElutionGroup,
+        elution_group: &crate::models::elution_group::ElutionGroup<FH>,
     ) -> PrecursorIndexQuery {
         let rt_range = tol.rt_range(elution_group.rt_seconds);
         let mz_range = tol.mz_range(elution_group.precursor_mz);
@@ -140,24 +148,32 @@ impl RawFileIndex {
         }
     }
 
-    fn queries_from_elution_elements_impl(
+    fn queries_from_elution_elements_impl<FH: Clone + Eq + Serialize + Hash + Send + Sync>(
         &self,
         tol: &dyn crate::traits::tolerance::Tolerance,
-        elution_elements: &crate::models::elution_group::ElutionGroup,
-    ) -> FragmentGroupIndexQuery {
+        elution_elements: &crate::models::elution_group::ElutionGroup<FH>,
+    ) -> FragmentGroupIndexQuery<FH> {
         let precursor_query = self.query_from_elution_group_impl(tol, elution_elements);
         // TODO: change this unwrap and use explicitly the lack of fragment mzs.
         // Does that mean its onlyt a precursor query?
         // Why is it an option?
-        let fragment_mzs = elution_elements.fragment_mzs.as_ref().unwrap();
-        let mut fqs = Vec::with_capacity(fragment_mzs.len());
-        for fragment in fragment_mzs {
-            let mz_range = tol.mz_range(*fragment);
-            fqs.push((
-                self.meta_converters.mz_converter.invert(mz_range.0) as u32,
-                self.meta_converters.mz_converter.invert(mz_range.1) as u32,
-            ));
-        }
+        //
+        // let fragment_mzs = elution_elements.fragment_mzs.as_ref().unwrap();
+
+        let fqs = elution_elements
+            .fragment_mzs
+            .iter()
+            .map(|(k, v)| {
+                let mz_range = tol.mz_range(*v);
+                (
+                    k.clone(),
+                    (
+                        self.meta_converters.mz_converter.invert(mz_range.0) as u32,
+                        self.meta_converters.mz_converter.invert(mz_range.1) as u32,
+                    ),
+                )
+            })
+            .collect();
 
         FragmentGroupIndexQuery {
             mz_index_ranges: fqs,
@@ -166,16 +182,18 @@ impl RawFileIndex {
     }
 }
 
-impl IndexedData<FragmentGroupIndexQuery, RawPeak> for RawFileIndex {
-    fn query(&self, fragment_query: &FragmentGroupIndexQuery) -> Vec<RawPeak> {
+impl<FH: Hash + Copy + Clone + Serialize + Eq + Debug + Send + Sync>
+    IndexedData<FragmentGroupIndexQuery<FH>, RawPeak> for RawFileIndex
+{
+    fn query(&self, fragment_query: &FragmentGroupIndexQuery<FH>) -> Vec<RawPeak> {
         let mut out = Vec::new();
         self.apply_on_query(fragment_query, &mut |peak, _| out.push(peak));
         out
     }
 
-    fn add_query<O, AG: crate::Aggregator<RawPeak, Output = O>>(
+    fn add_query<O, AG: Aggregator<RawPeak, Output = O>>(
         &self,
-        fragment_query: &FragmentGroupIndexQuery,
+        fragment_query: &FragmentGroupIndexQuery<FH>,
         aggregator: &mut AG,
     ) {
         self.apply_on_query(fragment_query, &mut |peak, _| aggregator.add(&peak));
@@ -183,7 +201,7 @@ impl IndexedData<FragmentGroupIndexQuery, RawPeak> for RawFileIndex {
 
     fn add_query_multi_group<O, AG: crate::Aggregator<RawPeak, Output = O>>(
         &self,
-        fragment_queries: &[FragmentGroupIndexQuery],
+        fragment_queries: &[FragmentGroupIndexQuery<FH>],
         aggregator: &mut [AG],
     ) {
         fragment_queries
@@ -193,12 +211,14 @@ impl IndexedData<FragmentGroupIndexQuery, RawPeak> for RawFileIndex {
     }
 }
 
-impl ToleranceAdapter<FragmentGroupIndexQuery> for RawFileIndex {
+impl<FH: Hash + Serialize + Eq + Clone + Send + Sync>
+    ToleranceAdapter<FragmentGroupIndexQuery<FH>, ElutionGroup<FH>> for RawFileIndex
+{
     fn query_from_elution_group(
         &self,
         tol: &dyn crate::traits::tolerance::Tolerance,
-        elution_group: &crate::models::elution_group::ElutionGroup,
-    ) -> FragmentGroupIndexQuery {
+        elution_group: &crate::models::elution_group::ElutionGroup<FH>,
+    ) -> FragmentGroupIndexQuery<FH> {
         self.queries_from_elution_elements_impl(tol, elution_group)
     }
 }
