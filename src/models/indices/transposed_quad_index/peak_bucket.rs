@@ -168,7 +168,7 @@ impl PeakBucket {
             ),
         };
 
-        // TODO do a binary search if the data is large-ish.
+        // TODO do a binary search if the data is large-ish... maybe ...
         let mut start_min = 0;
         let mut end_max = self.len();
         while start_min < end_max && self.scan_offsets[start_min] < scan_min {
@@ -180,6 +180,11 @@ impl PeakBucket {
 
         (start_min..end_max).filter_map(move |x| {
             let scan_index = self.scan_offsets[x];
+            if scan_index < scan_min || scan_index > scan_max {
+                // TODO search what cases make this branch happen ...
+                return None;
+            }
+
             let retention_time = self.retention_times[x];
             if let Some((low, high)) = rt_range {
                 if retention_time < low || retention_time > high {
@@ -201,7 +206,7 @@ impl PeakBucket {
     ) -> impl Iterator<Item = PeakInBucket> + '_ {
         let scan_range = match scan_range {
             Some((scan_low, scan_high)) => scan_low..scan_high.min(self.scan_offsets.len() - 1),
-            None => 0..self.scan_offsets.len(),
+            None => 0..(self.scan_offsets.len() - 1),
         };
         scan_range
             .flat_map(move |scan_index| {

@@ -37,8 +37,8 @@ pub struct QuadSplittedTransposedIndex {
     indices: HashMap<Arc<SingleQuadrupoleSetting>, TransposedQuadIndex>,
     flat_quad_settings: Vec<SingleQuadrupoleSetting>,
     rt_converter: Frame2RtConverter,
-    mz_converter: Tof2MzConverter,
-    im_converter: Scan2ImConverter,
+    pub mz_converter: Tof2MzConverter,
+    pub im_converter: Scan2ImConverter,
     metadata: Metadata,
 }
 
@@ -442,9 +442,9 @@ impl<FH: Hash + Copy + Clone + Serialize + Eq + Send + Sync>
 // ============================================================================
 
 impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
-    IndexedData<FragmentGroupIndexQuery<FH>, (RawPeak, usize)> for QuadSplittedTransposedIndex
+    IndexedData<FragmentGroupIndexQuery<FH>, (RawPeak, FH)> for QuadSplittedTransposedIndex
 {
-    fn query(&self, fragment_query: &FragmentGroupIndexQuery<FH>) -> Vec<(RawPeak, usize)> {
+    fn query(&self, fragment_query: &FragmentGroupIndexQuery<FH>) -> Vec<(RawPeak, FH)> {
         let precursor_mz_range = (
             fragment_query.precursor_query.isolation_mz_range.0 as f64,
             fragment_query.precursor_query.isolation_mz_range.0 as f64,
@@ -457,16 +457,15 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
         fragment_query
             .mz_index_ranges
             .iter()
-            .enumerate()
-            .flat_map(|(ind, (_, tof_range))| {
-                let out: Vec<(RawPeak, usize)> = self
+            .flat_map(|(fh, tof_range)| {
+                let out: Vec<(RawPeak, FH)> = self
                     .query_peaks(
                         *tof_range,
                         precursor_mz_range,
                         scan_range,
                         frame_index_range,
                     )
-                    .map(|x| (RawPeak::from(x), ind))
+                    .map(|x| (RawPeak::from(x), *fh))
                     .collect();
 
                 out
@@ -474,7 +473,7 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
             .collect()
     }
 
-    fn add_query<O, AG: crate::Aggregator<(RawPeak, usize), Output = O>>(
+    fn add_query<O, AG: crate::Aggregator<(RawPeak, FH), Output = O>>(
         &self,
         fragment_query: &FragmentGroupIndexQuery<FH>,
         aggregator: &mut AG,
@@ -491,19 +490,18 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
         fragment_query
             .mz_index_ranges
             .iter()
-            .enumerate()
-            .for_each(|(ind, (_, tof_range))| {
+            .for_each(|(fh, tof_range)| {
                 self.query_peaks(
                     *tof_range,
                     precursor_mz_range,
                     scan_range,
                     frame_index_range,
                 )
-                .for_each(|peak| aggregator.add(&(RawPeak::from(peak), ind)));
+                .for_each(|peak| aggregator.add(&(RawPeak::from(peak), *fh)));
             })
     }
 
-    fn add_query_multi_group<O, AG: crate::Aggregator<(RawPeak, usize), Output = O>>(
+    fn add_query_multi_group<O, AG: crate::Aggregator<(RawPeak, FH), Output = O>>(
         &self,
         fragment_queries: &[FragmentGroupIndexQuery<FH>],
         aggregator: &mut [AG],
@@ -523,14 +521,9 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
                     fragment_query.precursor_query.frame_index_range,
                 ));
 
-                for (ind, (_fh, tof_range)) in fragment_query
-                    .mz_index_ranges
-                    .clone()
-                    .into_iter()
-                    .enumerate()
-                {
+                for (fh, tof_range) in fragment_query.mz_index_ranges.clone().into_iter() {
                     self.query_peaks(tof_range, precursor_mz_range, scan_range, frame_index_range)
-                        .for_each(|peak| agg.add(&(RawPeak::from(peak), ind)));
+                        .for_each(|peak| agg.add(&(RawPeak::from(peak), fh)));
                 }
             });
     }
