@@ -127,7 +127,11 @@ where
         microseconds_per_query
     );
 
-    aggregators.into_par_iter().map(|x| x.finalize()).collect()
+    let start = Instant::now();
+    let out = aggregators.into_par_iter().map(|x| x.finalize()).collect();
+    let elapsed = start.elapsed();
+    info!("Aggregation took {:#?}", elapsed);
+    out
 }
 
 pub fn query_indexed<ID, TA, TL, QF, AE, OE, AG, FH>(

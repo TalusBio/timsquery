@@ -16,6 +16,8 @@ use timsrust::converters::{ConvertableDomain, Scan2ImConverter, Tof2MzConverter}
 pub struct MultiCMGStats<FH: Clone + Eq + Serialize + Hash + Send + Sync> {
     pub scan_tof_mapping: MappingCollection<(FH, u32), ScanTofStatsCalculatorPair>,
     pub converters: (Tof2MzConverter, Scan2ImConverter),
+    pub uniq_rts: HashSet<u32>,
+    pub uniq_ids: HashSet<FH>,
     pub id: u64,
 }
 
@@ -30,6 +32,8 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> MultiCMGStatsFactory<FH> {
         MultiCMGStats {
             scan_tof_mapping: MappingCollection::new(),
             converters: (self.converters.0, self.converters.1),
+            uniq_rts: HashSet::new(),
+            uniq_ids: HashSet::new(),
             id,
         }
     }
@@ -120,6 +124,13 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> NaturalFinalizedMultiCMGSt
             &lazy_hyperscore,
             1 + (other.retention_time_miliseconds.len() / 10),
         );
+        // Set 0 the NANs
+        // Q: Can I do this in-place? Will the comnpiler do it for me?
+        let lazy_hyperscore_vs_baseline: Vec<f64> = lazy_hyperscore_vs_baseline
+            .into_iter()
+            .map(|x| if x.is_nan() { 0.0 } else { x })
+            .collect();
+
         let mut apex_hyperscore_index = 0;
         let mut max_hyperscore = 0.0f64;
         for (i, val) in lazy_hyperscore_vs_baseline.iter().enumerate() {
@@ -195,6 +206,10 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> From<MultiCMGStatsArrays<F
             .collect::<HashSet<u32>>();
         let mut unique_rts = unique_rts.into_iter().collect::<Vec<u32>>();
         unique_rts.sort();
+
+        // Q: Is this the most efficient way to do this?
+        // I think having the btrees as the unit of integration might not be the best idea.
+        // ... If I want to preserve the sparsity, I can use a hashmap and the sort it.
         let mut summed_intensity_tree: BTreeMap<u32, u64> =
             BTreeMap::from_iter(unique_rts.iter().map(|x| (*x, 0)));
         let mut npeaks_tree: BTreeMap<u32, usize> =
@@ -231,6 +246,7 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> From<MultiCMGStatsArrays<F
             }
 
             // Now we fill with nans the missing values.
+            // Q: Do I really need to do this here?
             for rt in unique_rts.iter() {
                 tmp_tree.entry(*rt).or_insert((f64::NAN, f64::NAN, 0));
             }
@@ -265,6 +281,9 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> Aggregator<(RawPeak, FH)>
         let u64_intensity = peak.intensity as u64;
         let rt_miliseconds = (peak.retention_time * 1000.0) as u32;
 
+        self.uniq_rts.insert(rt_miliseconds);
+        self.uniq_ids.insert(transition.clone());
+
         self.scan_tof_mapping
             .entry((transition.clone(), rt_miliseconds))
             .and_modify(|curr| {
@@ -279,39 +298,30 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> Aggregator<(RawPeak, FH)>
 
     fn finalize(self) -> NaturalFinalizedMultiCMGStatsArrays<FH> {
         let mut transition_stats = MappingCollection::new();
-        for ((transition, rt_ms), scan_tof_mapping) in self.scan_tof_mapping.into_iter() {
-            transition_stats
-                .entry(transition)
-                .and_modify(|curr: &mut ChromatomobilogramStatsArrays| {
-                    curr.retention_time_miliseconds.push(rt_ms);
-                    curr.scan_index_means
-                        .push(scan_tof_mapping.scan.mean().unwrap());
-                    curr.scan_index_sds
-                        .push(scan_tof_mapping.scan.standard_deviation().unwrap());
-                    curr.tof_index_means
-                        .push(scan_tof_mapping.tof.mean().unwrap());
-                    curr.tof_index_sds
-                        .push(scan_tof_mapping.tof.standard_deviation().unwrap());
-                    curr.intensities.push(scan_tof_mapping.tof.weight());
-                })
-                .or_insert_with(|| {
-                    let mut out = ChromatomobilogramStatsArrays::new();
-                    out.retention_time_miliseconds.push(rt_ms);
-                    out.scan_index_means
-                        .push(scan_tof_mapping.scan.mean().unwrap());
-                    out.scan_index_sds
-                        .push(scan_tof_mapping.scan.standard_deviation().unwrap());
-                    out.tof_index_means
-                        .push(scan_tof_mapping.tof.mean().unwrap());
-                    out.tof_index_sds
-                        .push(scan_tof_mapping.tof.standard_deviation().unwrap());
-                    out.intensities.push(scan_tof_mapping.tof.weight());
-                    out
-                });
-        }
 
-        for (_k, v) in transition_stats.iter_mut() {
-            v.sort_by_rt();
+        for id_key in self.uniq_ids.iter() {
+            let mut id_cmgs = ChromatomobilogramStatsArrays::new();
+            for rt_key in self.uniq_rts.iter() {
+                let scan_tof_mapping = self.scan_tof_mapping.get(&(id_key.clone(), *rt_key));
+                if let Some(scan_tof_mapping) = scan_tof_mapping {
+                    id_cmgs.retention_time_miliseconds.push(*rt_key);
+                    id_cmgs
+                        .scan_index_means
+                        .push(scan_tof_mapping.scan.mean().unwrap());
+                    id_cmgs
+                        .scan_index_sds
+                        .push(scan_tof_mapping.scan.standard_deviation().unwrap());
+                    id_cmgs
+                        .tof_index_means
+                        .push(scan_tof_mapping.tof.mean().unwrap());
+                    id_cmgs
+                        .tof_index_sds
+                        .push(scan_tof_mapping.tof.standard_deviation().unwrap());
+                    id_cmgs.intensities.push(scan_tof_mapping.tof.weight());
+                }
+            }
+            id_cmgs.sort_by_rt();
+            transition_stats.insert(id_key.clone(), id_cmgs);
         }
 
         let tmp = MultiCMGStatsArrays {
@@ -323,5 +333,33 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> Aggregator<(RawPeak, FH)>
             &self.converters.0,
             &self.converters.1,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_value_vs_baseline() {
+        let vals = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
+        let baseline_window_size = 3;
+        let baseline = rolling_median(&vals, baseline_window_size, f64::NAN);
+        let out = calculate_value_vs_baseline(&vals, baseline_window_size);
+        let expect_val = vec![f64::NAN, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, f64::NAN];
+        let all_close = out
+            .iter()
+            .zip(expect_val.iter())
+            .filter(|(a, b)| ((!a.is_nan()) && (!b.is_nan())))
+            .all(|(a, b)| (a - b).abs() < 1e-6);
+
+        let all_match_nan = out
+            .iter()
+            .zip(expect_val.iter())
+            .filter(|(a, b)| ((a.is_nan()) || (b.is_nan())))
+            .all(|(a, b)| a.is_nan() && b.is_nan());
+
+        assert!(all_close, "Expected {:?}, got {:?}", expect_val, out);
+        assert!(all_match_nan, "Expected {:?}, got {:?}", expect_val, out);
     }
 }

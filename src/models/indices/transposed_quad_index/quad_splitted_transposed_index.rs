@@ -1,7 +1,7 @@
 use super::quad_index::{
     FrameRTTolerance, PeakInQuad, TransposedQuadIndex, TransposedQuadIndexBuilder,
 };
-
+use crate::models::elution_group::ElutionGroup;
 use crate::models::frames::raw_peak::RawPeak;
 use crate::models::frames::single_quad_settings::expand_quad_settings;
 use crate::models::frames::single_quad_settings::SingleQuadrupoleSetting;
@@ -11,13 +11,12 @@ use crate::traits::indexed_data::IndexedData;
 use crate::utils::compress_explode::explode_vec;
 use crate::utils::display::{glimpse_vec, GlimpseConfig};
 use crate::ToleranceAdapter;
-
-use crate::models::elution_group::ElutionGroup;
 use log::{debug, info, trace};
 use rayon::prelude::*;
 use serde::Serialize;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::sync::Arc;
@@ -40,6 +39,16 @@ pub struct QuadSplittedTransposedIndex {
     pub mz_converter: Tof2MzConverter,
     pub im_converter: Scan2ImConverter,
     metadata: Metadata,
+}
+
+impl Debug for QuadSplittedTransposedIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "QuadSplittedTransposedIndex(num_quads: {})",
+            self.flat_quad_settings.len()
+        )
+    }
 }
 
 impl QuadSplittedTransposedIndex {
