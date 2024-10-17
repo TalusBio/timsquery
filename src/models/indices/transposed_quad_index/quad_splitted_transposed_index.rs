@@ -2,6 +2,7 @@ use super::quad_index::{
     FrameRTTolerance, PeakInQuad, TransposedQuadIndex, TransposedQuadIndexBuilder,
 };
 use crate::models::elution_group::ElutionGroup;
+use crate::models::frames::expanded_frame::{expand_and_split_frame, ExpandedFrameSlice};
 use crate::models::frames::raw_peak::RawPeak;
 use crate::models::frames::single_quad_settings::expand_quad_settings;
 use crate::models::frames::single_quad_settings::SingleQuadrupoleSetting;
@@ -33,7 +34,8 @@ use timsrust::TimsRustError;
 // - JSP: 2024-11-19
 
 pub struct QuadSplittedTransposedIndex {
-    indices: HashMap<Arc<SingleQuadrupoleSetting>, TransposedQuadIndex>,
+    precursor_index: TransposedQuadIndex,
+    fragment_indices: HashMap<SingleQuadrupoleSetting, TransposedQuadIndex>,
     flat_quad_settings: Vec<SingleQuadrupoleSetting>,
     rt_converter: Frame2RtConverter,
     pub mz_converter: Tof2MzConverter,
@@ -74,7 +76,7 @@ impl QuadSplittedTransposedIndex {
         let rt_range = rt_range.map(|x| x.to_frame_index_range(&self.rt_converter));
 
         matching_quads.into_iter().flat_map(move |qs| {
-            let tqi = self.indices.get(&qs).unwrap();
+            let tqi = self.fragment_indices.get(&qs).unwrap();
             tqi.query_peaks(tof_range, scan_range, rt_range)
         })
     }
@@ -91,14 +93,36 @@ impl QuadSplittedTransposedIndex {
                     && (qs.ranges.isolation_high >= precursor_mz_range.0)
             })
             .filter(move |qs| {
-                if let Some(scan_range) = scan_range {
-                    // This is done for sanity tbh ... sometimes they get flipped
-                    // bc the lowest scan is actually the highest 1/k0.
-                    let min_scan = qs.ranges.scan_start.min(qs.ranges.scan_end);
-                    let max_scan = qs.ranges.scan_start.max(qs.ranges.scan_end);
-                    (min_scan <= scan_range.1) && (scan_range.0 <= max_scan)
-                } else {
-                    true
+                // if let Some(scan_range) = scan_range {
+                //     // This is done for sanity tbh ... sometimes they get flipped
+                //     // bc the lowest scan is actually the highest 1/k0.
+                // } else {
+                //     true
+                // }
+                //
+                match scan_range {
+                    Some((min_scan, max_scan)) => {
+                        assert!(qs.ranges.scan_start <= qs.ranges.scan_end);
+                        assert!(min_scan <= max_scan);
+
+                        // Above quad
+                        // Quad                   [----------]
+                        // Query                               [------]
+                        let above_quad = qs.ranges.scan_end < min_scan;
+
+                        // Below quad
+                        // Quad                  [------]
+                        // Query       [------]
+                        let below_quad = qs.ranges.scan_start > max_scan;
+
+                        if above_quad || below_quad {
+                            // This quad is completely outside the scan range
+                            false
+                        } else {
+                            true
+                        }
+                    }
+                    None => true,
                 }
             })
             .cloned()
@@ -190,13 +214,19 @@ impl Display for QuadSplittedTransposedIndex {
                 new_line: true,
             }),
         ));
+
+        disp_str.push_str("precursor_index: \n");
+        disp_str.push_str(&format!(" -- {}\n", self.precursor_index));
         let mut num_shown = 0;
-        for (qs, tqi) in self.indices.iter() {
-            disp_str.push_str(&format!(" - {}: \n", qs));
+        for (qs, tqi) in self.fragment_indices.iter() {
+            disp_str.push_str(&format!(" - {:?}: \n", qs));
             disp_str.push_str(&format!(" -- {}\n", tqi));
             num_shown += 1;
             if num_shown > 5 {
-                disp_str.push_str(&format!(" ........ len = {}\n", self.indices.len()));
+                disp_str.push_str(&format!(
+                    " ........ len = {}\n",
+                    self.fragment_indices.len()
+                ));
                 break;
             }
         }
@@ -218,8 +248,9 @@ impl QuadSplittedTransposedIndex {
     }
 }
 
+#[derive(Debug, Clone, Default)]
 pub struct QuadSplittedTransposedIndexBuilder {
-    indices: HashMap<SingleQuadrupoleSetting, TransposedQuadIndexBuilder>,
+    indices: HashMap<Option<SingleQuadrupoleSetting>, TransposedQuadIndexBuilder>,
     rt_converter: Option<Frame2RtConverter>,
     mz_converter: Option<Tof2MzConverter>,
     im_converter: Option<Scan2ImConverter>,
@@ -231,54 +262,30 @@ pub struct QuadSplittedTransposedIndexBuilder {
 }
 
 impl QuadSplittedTransposedIndexBuilder {
-    fn new() -> Self {
-        Self {
-            indices: HashMap::new(),
-            rt_converter: None,
-            mz_converter: None,
-            im_converter: None,
-            metadata: None,
-            added_peaks: 0,
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     fn add_frame(&mut self, frame: Frame) {
-        let expanded_quad_settings = expand_quad_settings(&frame.quadrupole_settings);
-        let exploded_scans = explode_vec(&frame.scan_offsets);
+        let expanded_slices = expand_and_split_frame(frame);
 
-        for qs in expanded_quad_settings {
+        for es in expanded_slices.into_iter() {
             // Add key if it doesnt exist ...
 
-            if let Entry::Vacant(e) = self.indices.entry(qs) {
-                let max_tof = frame.tof_indices.iter().max().unwrap();
-                trace!(
-                    "Adding new transposed quad index for qs {:?} with max tof {}",
-                    qs,
-                    max_tof
-                );
-                let new_index = TransposedQuadIndexBuilder::new(qs);
-                e.insert(new_index);
-            }
+            self.indices
+                .entry(es.quadrupole_settings)
+                .or_insert(TransposedQuadIndexBuilder::new(es.quadrupole_settings));
 
-            let peak_start = frame.scan_offsets[qs.ranges.scan_start];
-            let peak_end = frame.scan_offsets[qs.ranges.scan_end + 1];
-
-            let int_slice = frame.intensities[peak_start..peak_end].to_vec();
-            let tof_slice = frame.tof_indices[peak_start..peak_end].to_vec();
-            let expanded_scan_slice = exploded_scans[peak_start..peak_end].to_vec();
-
-            let frame_index = frame.index;
-            let frame_rt = frame.rt;
-            self.added_peaks += int_slice.len() as u64;
-
-            self.indices.get_mut(&qs).unwrap().add_frame_slice(
-                int_slice,
-                tof_slice,
-                expanded_scan_slice,
-                frame_index,
-                frame_rt,
-            );
+            self.added_peaks += es.len() as u64;
+            self.add_frame_slice(es);
         }
+    }
+
+    fn add_frame_slice(&mut self, frame_slice: ExpandedFrameSlice) {
+        self.indices
+            .get_mut(&frame_slice.quadrupole_settings)
+            .unwrap()
+            .add_frame_slice(frame_slice);
     }
 
     fn from_path(path: &str) -> Result<Self, TimsRustError> {
@@ -297,9 +304,9 @@ impl QuadSplittedTransposedIndexBuilder {
             added_peaks: 0,
         };
 
-        let out2: Result<Vec<Self>, TimsRustError> = file_reader
-            .get_all()
+        let out2: Result<Vec<Self>, TimsRustError> = (0..file_reader.len())
             .into_par_iter()
+            .map(|id| file_reader.get(id))
             .chunks(100)
             .map(|frames| {
                 let mut out = Self::new();
@@ -320,7 +327,7 @@ impl QuadSplittedTransposedIndexBuilder {
         Ok(final_out)
     }
 
-    fn fold(&mut self, other: Self) {
+    pub fn fold(&mut self, other: Self) {
         for (qs, builder) in other.indices.into_iter() {
             self.indices
                 .entry(qs)
@@ -330,19 +337,23 @@ impl QuadSplittedTransposedIndexBuilder {
         self.added_peaks += other.added_peaks;
     }
 
-    fn build(self) -> QuadSplittedTransposedIndex {
+    pub fn build(self) -> QuadSplittedTransposedIndex {
         let mut indices = HashMap::new();
         let mut flat_quad_settings = Vec::new();
-        let built: Vec<(TransposedQuadIndex, SingleQuadrupoleSetting)> = self
+        let built: Vec<(TransposedQuadIndex, Option<SingleQuadrupoleSetting>)> = self
             .indices
             .into_par_iter()
             .map(|(qs, builder)| (builder.build(), qs))
             .collect();
 
+        let mut precursor_index: Option<TransposedQuadIndex> = None;
         for (qi, qs) in built.into_iter() {
-            let qa: Arc<SingleQuadrupoleSetting> = Arc::new(qs);
-            indices.insert(qa.clone(), qi);
-            flat_quad_settings.push(qs);
+            if let Some(qs) = qs {
+                indices.insert(qs, qi);
+                flat_quad_settings.push(qs);
+            } else {
+                precursor_index = Some(qi);
+            }
         }
 
         flat_quad_settings.sort_by(|a, b| {
@@ -353,7 +364,8 @@ impl QuadSplittedTransposedIndexBuilder {
         });
 
         QuadSplittedTransposedIndex {
-            indices,
+            precursor_index: precursor_index.expect("Precursor peaks should be present"),
+            fragment_indices: indices,
             flat_quad_settings,
             rt_converter: self.rt_converter.unwrap(),
             mz_converter: self.mz_converter.unwrap(),

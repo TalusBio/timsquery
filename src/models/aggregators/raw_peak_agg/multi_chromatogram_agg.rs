@@ -5,7 +5,8 @@ use crate::models::aggregators::rolling_calculators::rolling_median;
 use crate::models::aggregators::streaming_aggregator::RunningStatsCalculator;
 use crate::models::frames::raw_peak::RawPeak;
 use crate::traits::aggregator::Aggregator;
-use crate::utils::math::lnfact;
+use crate::utils::math::{lnfact, lnfact_float};
+use log::{debug, warn};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashSet};
 use std::hash::Hash;
@@ -50,6 +51,9 @@ pub struct FinalizedMultiCMGStatsArrays<FH: Clone + Eq + Serialize + Hash + Send
     pub retention_time_miliseconds: Vec<u32>,
     pub weighted_scan_index_mean: Vec<f64>,
     pub summed_intensity: Vec<u64>,
+
+    // This should be the same as the sum of log intensities.
+    pub log_intensity_products: Vec<f64>,
     pub npeaks: Vec<usize>,
     pub scan_index_means: MappingCollection<FH, Vec<f64>>,
     pub tof_index_means: MappingCollection<FH, Vec<f64>>,
@@ -68,10 +72,14 @@ pub struct NaturalFinalizedMultiCMGStatsArrays<FH: Clone + Eq + Serialize + Hash
     pub npeaks: Vec<usize>,
     pub lazy_hyperscore: Vec<f64>,
     pub lazy_hyperscore_vs_baseline: Vec<f64>,
+    pub norm_hyperscore_vs_baseline: Vec<f64>,
+    pub lazyerscore: Vec<f64>,
+    pub lazyerscore_vs_baseline: Vec<f64>,
+    pub norm_lazyerscore_vs_baseline: Vec<f64>,
     pub transition_mobilities: MappingCollection<FH, Vec<f64>>,
     pub transition_mzs: MappingCollection<FH, Vec<f64>>,
     pub transition_intensities: MappingCollection<FH, Vec<u64>>,
-    pub apex_hyperscore_index: usize,
+    pub apex_primary_score_index: usize,
     pub id: u64,
 }
 
@@ -120,23 +128,55 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> NaturalFinalizedMultiCMGSt
         mobility_converter: &Scan2ImConverter,
     ) -> Self {
         let lazy_hyperscore = calculate_lazy_hyperscore(&other.npeaks, &other.summed_intensity);
-        let lazy_hyperscore_vs_baseline = calculate_value_vs_baseline(
-            &lazy_hyperscore,
-            1 + (other.retention_time_miliseconds.len() / 10),
-        );
+        let basline_window_len = 1 + (other.retention_time_miliseconds.len() / 10);
+        let lazy_hyperscore_vs_baseline =
+            calculate_value_vs_baseline(&lazy_hyperscore, basline_window_len);
+        let lazyerscore: Vec<f64> = other
+            .log_intensity_products
+            .iter()
+            .map(|x| lnfact_float(*x))
+            .collect();
+        let lazyerscore_vs_baseline = calculate_value_vs_baseline(&lazyerscore, basline_window_len);
+
         // Set 0 the NANs
         // Q: Can I do this in-place? Will the comnpiler do it for me?
         let lazy_hyperscore_vs_baseline: Vec<f64> = lazy_hyperscore_vs_baseline
             .into_iter()
             .map(|x| if x.is_nan() { 0.0 } else { x })
             .collect();
+        let lazyerscore_vs_baseline: Vec<f64> = lazyerscore_vs_baseline
+            .into_iter()
+            .map(|x| if x.is_nan() { 0.0 } else { x })
+            .collect();
 
-        let mut apex_hyperscore_index = 0;
-        let mut max_hyperscore = 0.0f64;
-        for (i, val) in lazy_hyperscore_vs_baseline.iter().enumerate() {
-            if max_hyperscore.is_nan() || *val > max_hyperscore {
-                max_hyperscore = *val;
-                apex_hyperscore_index = i;
+        // Calculate the standard deviation of the lazyscores v baseline
+        let mut sd_calculator_hyperscore = RunningStatsCalculator::new(1, 0.0);
+        let mut sd_calculator_lazyscore = RunningStatsCalculator::new(1, 0.0);
+
+        (0..lazyerscore_vs_baseline.len()).for_each(|i| {
+            sd_calculator_hyperscore.add(lazy_hyperscore_vs_baseline[i], 1);
+            sd_calculator_lazyscore.add(lazyerscore_vs_baseline[i], 1);
+        });
+        let sd_hyperscore = sd_calculator_hyperscore.standard_deviation().unwrap();
+        let sd_lazyscore = sd_calculator_lazyscore.standard_deviation().unwrap();
+
+        // Calculate the normalized scores
+        let norm_hyperscore_vs_baseline: Vec<f64> = lazy_hyperscore_vs_baseline
+            .iter()
+            .map(|x| x / sd_hyperscore)
+            .collect();
+        let norm_lazyerscore_vs_baseline: Vec<f64> = lazyerscore_vs_baseline
+            .iter()
+            .map(|x| x / sd_lazyscore)
+            .collect();
+
+        let mut apex_primary_score_index = 0;
+        let mut max_primary_score = 0.0f64;
+        let primary_scores = &norm_lazyerscore_vs_baseline;
+        for (i, val) in primary_scores.iter().enumerate() {
+            if max_primary_score.is_nan() || *val > max_primary_score {
+                max_primary_score = *val;
+                apex_primary_score_index = i;
             }
         }
 
@@ -150,7 +190,13 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> NaturalFinalizedMultiCMGSt
             average_mobility: other
                 .weighted_scan_index_mean
                 .into_iter()
-                .map(|x| mobility_converter.convert(x))
+                .map(|x| {
+                    let out = mobility_converter.convert(x);
+                    if out < 0.5 || out > 2.0 {
+                        debug!("Bad mobility value: {:?}, input was {:?}", out, x);
+                    }
+                    out
+                })
                 .collect(),
             summed_intensity: other.summed_intensity,
             npeaks: other.npeaks,
@@ -176,7 +222,11 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> NaturalFinalizedMultiCMGSt
             transition_intensities: other.intensities,
             lazy_hyperscore,
             lazy_hyperscore_vs_baseline,
-            apex_hyperscore_index,
+            apex_primary_score_index,
+            lazyerscore,
+            lazyerscore_vs_baseline,
+            norm_hyperscore_vs_baseline,
+            norm_lazyerscore_vs_baseline,
             id: other.id,
         }
     }
@@ -195,6 +245,7 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> From<MultiCMGStatsArrays<F
             weighted_scan_index_mean: Vec::new(),
             intensities: MappingCollection::new(),
             summed_intensity: Vec::new(),
+            log_intensity_products: Vec::new(),
             npeaks: Vec::new(),
             id: other.id,
         };
@@ -212,6 +263,8 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> From<MultiCMGStatsArrays<F
         // ... If I want to preserve the sparsity, I can use a hashmap and the sort it.
         let mut summed_intensity_tree: BTreeMap<u32, u64> =
             BTreeMap::from_iter(unique_rts.iter().map(|x| (*x, 0)));
+        let mut intensity_logsums_tree: BTreeMap<u32, f64> =
+            BTreeMap::from_iter(unique_rts.iter().map(|x| (*x, 0.0)));
         let mut npeaks_tree: BTreeMap<u32, usize> =
             BTreeMap::from_iter(unique_rts.iter().map(|x| (*x, 0)));
         let mut weighted_tof_index_mean_tree: BTreeMap<u32, RunningStatsCalculator> =
@@ -230,11 +283,19 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> From<MultiCMGStatsArrays<F
                 let tof = v.tof_index_means[i];
                 let inten = v.intensities[i];
 
+                if inten > 100 {
+                    npeaks_tree.entry(rt).and_modify(|curr| *curr += 1);
+                }
                 tmp_tree.entry(rt).or_insert((scan, tof, inten));
                 summed_intensity_tree
                     .entry(rt)
                     .and_modify(|curr| *curr += inten);
-                npeaks_tree.entry(rt).and_modify(|curr| *curr += 1);
+
+                intensity_logsums_tree.entry(rt).and_modify(|curr| {
+                    if inten > 10 {
+                        *curr += (inten as f64).ln()
+                    }
+                });
                 weighted_tof_index_mean_tree
                     .entry(rt)
                     .and_modify(|curr| curr.add(tof, inten))
@@ -265,8 +326,18 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> From<MultiCMGStatsArrays<F
         out.npeaks = npeaks_tree.into_values().collect();
         out.weighted_scan_index_mean = weighted_scan_index_mean_tree
             .into_values()
-            .map(|x| x.mean().expect("At least one value should be present"))
+            .map(|x| {
+                let out = x.mean().expect("At least one value should be present");
+                if out < 0.0 || out > 1000.0 {
+                    warn!("Bad mobility value: {:?}, input was {:?}", out, x);
+                }
+
+                out
+            })
             .collect();
+
+        // Note: The log of products is the same as the sum of logs.
+        out.log_intensity_products = intensity_logsums_tree.into_values().collect();
         out
     }
 }

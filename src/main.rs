@@ -5,8 +5,8 @@ use timsquery::queriable_tims_data::queriable_tims_data::query_multi_group;
 use timsquery::traits::tolerance::DefaultTolerance;
 use timsquery::{
     models::aggregators::{
-        ChromatomobilogramStats, ExtractedIonChromatomobilogram, MultiCMGStats,
-        MultiCMGStatsFactory, RawPeakIntensityAggregator, RawPeakVectorAggregator,
+        ChromatomobilogramStats, ExtractedIonChromatomobilogram, MultiCMGStatsFactory,
+        RawPeakIntensityAggregator, RawPeakVectorAggregator,
     },
     models::indices::raw_file_index::RawFileIndex,
     models::indices::transposed_quad_index::QuadSplittedTransposedIndex,

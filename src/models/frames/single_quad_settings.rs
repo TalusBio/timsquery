@@ -36,6 +36,11 @@ impl Display for SingleQuadrupoleSettingRanges {
     }
 }
 
+/// A single quadrupole setting.
+///
+/// NOTE: Only the index is used for the hashing of this struct.
+/// So make sure that int he buildingn process there is no generation
+/// of settings with the same index.
 #[derive(Debug, Clone, Copy)]
 pub struct SingleQuadrupoleSetting {
     pub index: SingleQuadrupoleSettingIndex,
@@ -81,7 +86,17 @@ impl PartialEq for SingleQuadrupoleSetting {
 
 impl Eq for SingleQuadrupoleSetting {}
 
-pub fn expand_quad_settings(quad_settings: &QuadrupoleSettings) -> Vec<SingleQuadrupoleSetting> {
+#[derive(Debug, Clone, Hash, PartialEq)]
+pub enum ExpandedFrameQuadSettings {
+    Unfragmented,
+    Fragmented(Vec<SingleQuadrupoleSetting>),
+}
+
+pub fn expand_quad_settings(quad_settings: &QuadrupoleSettings) -> ExpandedFrameQuadSettings {
+    if quad_settings.scan_ends.is_empty() {
+        return ExpandedFrameQuadSettings::Unfragmented;
+    }
+
     let mut out = Vec::with_capacity(quad_settings.scan_ends.len());
     for i in 0..quad_settings.scan_ends.len() {
         let isolation_width = quad_settings.isolation_width[i];
@@ -108,5 +123,5 @@ pub fn expand_quad_settings(quad_settings: &QuadrupoleSettings) -> Vec<SingleQua
 
         out.push(SingleQuadrupoleSetting { index, ranges });
     }
-    out
+    ExpandedFrameQuadSettings::Fragmented(out)
 }

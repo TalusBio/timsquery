@@ -12,7 +12,7 @@ pub struct ExpandedWindowGroup {
     // pub frame_indices: Vec<usize>,
     pub acquisition_type: AcquisitionType,
     pub ms_level: MSLevel,
-    pub quadrupole_settings: SingleQuadrupoleSetting,
+    pub quadrupole_settings: Option<SingleQuadrupoleSetting>,
     // pub intensity_correction_factor: f64,
     pub window_group: u8,
 }

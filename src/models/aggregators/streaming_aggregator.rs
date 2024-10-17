@@ -22,6 +22,8 @@ pub struct RunningStatsCalculator {
     weight: u64,
     mean_n: f64,
     d_: f64,
+    min: f64,
+    max: f64,
     // count: u64,
 }
 
@@ -30,7 +32,9 @@ impl RunningStatsCalculator {
         Self {
             weight,
             mean_n: mean,
-            d_: 0.0,
+            d_: 1.0,
+            min: mean,
+            max: mean,
             // count: 0,
         }
     }
@@ -52,6 +56,35 @@ impl RunningStatsCalculator {
 
         // Update the weight
         self.weight += weight;
+
+        // That should be the end of it but I seem to be getting consistently some
+        // values outside of the min and max observed values. Which might be a
+        // float issue ... TODO investigate.
+
+        // In the meantime I will just squeeze the mean to the min/max observed values.
+        self.min = self.min.min(value);
+        self.max = self.max.max(value);
+
+        self.mean_n = self.mean_n.min(self.max).max(self.min);
+
+        assert!(
+            self.mean_n <= self.max,
+            "high mean_n: {} max: {} curr_sd: {} weight_ratio: {} {:?}",
+            self.mean_n,
+            self.max,
+            self.standard_deviation().unwrap(),
+            weight_ratio,
+            self
+        );
+        assert!(
+            self.mean_n >= self.min,
+            "low mean_n: {} min: {} curr_sd: {} weight_ratio: {} {:?}",
+            self.mean_n,
+            self.min,
+            self.standard_deviation().unwrap(),
+            weight_ratio,
+            self
+        );
     }
 
     pub fn mean(&self) -> Result<f64> {
