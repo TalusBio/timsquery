@@ -192,7 +192,7 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> NaturalFinalizedMultiCMGSt
                 .into_iter()
                 .map(|x| {
                     let out = mobility_converter.convert(x);
-                    if out < 0.5 || out > 2.0 {
+                    if !(0.5..=2.0).contains(&out) {
                         debug!("Bad mobility value: {:?}, input was {:?}", out, x);
                     }
                     out
@@ -328,7 +328,7 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> From<MultiCMGStatsArrays<F
             .into_values()
             .map(|x| {
                 let out = x.mean().expect("At least one value should be present");
-                if out < 0.0 || out > 1000.0 {
+                if !(0.0..=1000.0).contains(&out) {
                     warn!("Bad mobility value: {:?}, input was {:?}", out, x);
                 }
 

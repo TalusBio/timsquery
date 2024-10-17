@@ -1,11 +1,11 @@
 use super::peak_bucket::PeakBucketBuilder;
 use super::peak_bucket::{PeakBucket, PeakInBucket};
-use crate::models::frames::expanded_frame::{expand_and_split_frame, ExpandedFrameSlice};
+use crate::models::frames::expanded_frame::ExpandedFrameSlice;
 use crate::models::frames::raw_peak::RawPeak;
 use crate::models::frames::single_quad_settings::SingleQuadrupoleSetting;
 use crate::sort_by_indices_multi;
 use crate::utils::display::{glimpse_vec, GlimpseConfig};
-use crate::utils::sorting::{argsort_by, par_argsort_by};
+use crate::utils::sorting::par_argsort_by;
 use log::debug;
 use log::info;
 use log::trace;

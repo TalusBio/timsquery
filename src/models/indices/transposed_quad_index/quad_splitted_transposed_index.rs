@@ -4,23 +4,19 @@ use super::quad_index::{
 use crate::models::elution_group::ElutionGroup;
 use crate::models::frames::expanded_frame::{expand_and_split_frame, ExpandedFrameSlice};
 use crate::models::frames::raw_peak::RawPeak;
-use crate::models::frames::single_quad_settings::expand_quad_settings;
 use crate::models::frames::single_quad_settings::SingleQuadrupoleSetting;
 use crate::models::queries::FragmentGroupIndexQuery;
 use crate::models::queries::PrecursorIndexQuery;
 use crate::traits::indexed_data::IndexedData;
-use crate::utils::compress_explode::explode_vec;
 use crate::utils::display::{glimpse_vec, GlimpseConfig};
 use crate::ToleranceAdapter;
 use log::{debug, info, trace};
 use rayon::prelude::*;
 use serde::Serialize;
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::hash::Hash;
-use std::sync::Arc;
 use std::time::Instant;
 use timsrust::converters::{
     ConvertableDomain, Frame2RtConverter, Scan2ImConverter, Tof2MzConverter,
