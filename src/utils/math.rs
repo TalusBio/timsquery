@@ -10,3 +10,11 @@ pub fn lnfact(n: u16) -> f64 {
         n * n.ln() - n + 0.5 * n.ln() + 0.5 * (std::f64::consts::PI * 2.0 * n).ln()
     }
 }
+
+pub fn lnfact_float(n: f64) -> f64 {
+    if n < 1.0 {
+        0.0
+    } else {
+        n * n.ln() - n + 0.5 * n.ln() + 0.5 * (std::f64::consts::PI * 2.0 * n).ln()
+    }
+}

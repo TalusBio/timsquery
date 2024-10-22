@@ -29,7 +29,7 @@ tasks:
 
   fmt:
     cmds:
-      - cargo fmt
+      - cargo +nightly fmt
 
   clippy:
     cmds:

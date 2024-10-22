@@ -93,6 +93,17 @@ impl PeakBucketBuilder {
         self.scan_offsets.push(scan_index);
     }
 
+    pub fn extend_peaks(
+        &mut self,
+        scan_indices: &[usize],
+        intensities: &[u32],
+        retention_times: &[f32],
+    ) {
+        self.scan_offsets.extend(scan_indices);
+        self.intensities.extend(intensities);
+        self.retention_times.extend(retention_times);
+    }
+
     pub fn build(mut self) -> PeakBucket {
         let mut indices = argsort_by(&self.scan_offsets, |x| *x);
         sort_by_indices_multi!(
@@ -102,7 +113,16 @@ impl PeakBucketBuilder {
             &mut self.intensities
         );
         // TODO consider if I really need to compress this.
-        let out = if self.scan_offsets.len() > 1000 {
+        // Options:
+        // 1. Change the compression of scans (I use the default in timsrust but im sure we can do
+        //    better) ...
+        //    - tuple of val-offset to prevent the long runs of non changing scans.
+        //    - btree of offsets?
+        // 2. Not compressing makes queries <10% slower, but building the index 10% faster ...
+        //    compressing all makes building the index 3x slower.
+        //
+        // let out = if false {
+        let out = if self.scan_offsets.len() > 500 {
             let compressed = compress_vec(&self.scan_offsets);
             PeakBucket {
                 intensities: self.intensities,

@@ -1,3 +1,5 @@
+use rayon::prelude::*;
+
 fn place_at_indices<T>(original: &mut [T], indices: &mut [usize]) {
     for i in 0..indices.len() {
         while i != indices[i] {
@@ -26,7 +28,20 @@ where
     K: Ord,
 {
     let mut indices: Vec<usize> = (0..v.len()).collect();
-    indices.sort_by_key(|&i| key(&v[i]));
+    // indices.sort_by_key(|&i| key(&v[i]));
+    indices.sort_unstable_by_key(|&i| key(&v[i]));
+    indices
+}
+
+pub fn par_argsort_by<T, F, K>(v: &[T], key: F) -> Vec<usize>
+where
+    F: Fn(&T) -> K + Sync + Send,
+    K: Ord + Sync + Send,
+    T: Sync + Send,
+{
+    let mut indices: Vec<usize> = (0..v.len()).collect();
+    // indices.sort_by_key(|&i| key(&v[i]));
+    indices.par_sort_unstable_by_key(|&i| key(&v[i]));
     indices
 }
 
