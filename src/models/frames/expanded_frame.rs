@@ -1,13 +1,21 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::single_quad_settings::{
     expand_quad_settings, ExpandedFrameQuadSettings, SingleQuadrupoleSetting,
 };
+use itertools::Itertools;
+use rayon::iter::IntoParallelIterator;
+use rayon::prelude::*;
+use timsrust::converters::{Scan2ImConverter, Tof2MzConverter};
 use timsrust::{AcquisitionType, Frame, MSLevel, QuadrupoleSettings};
 
 use crate::sort_by_indices_multi;
 use crate::utils::compress_explode::explode_vec;
+use crate::utils::frame_processing::lazy_centroid_weighted_frame;
 use crate::utils::sorting::argsort_by;
+use crate::utils::tolerance_ranges::{scan_tol_range, tof_tol_range};
+use log::debug;
 
 /// A frame after expanding the mobility data and re-sorting it by tof.
 #[derive(Debug, Clone)]
@@ -182,6 +190,161 @@ impl ExpandedFrame {
             window_group: frame.window_group,
         }
     }
+}
+
+pub fn expand_and_arrange_frames(
+    frames: Vec<Frame>,
+) -> HashMap<Option<SingleQuadrupoleSetting>, Vec<ExpandedFrameSlice>> {
+    let mut out = HashMap::new();
+    let split: Vec<ExpandedFrameSlice> = frames
+        .into_par_iter()
+        .flat_map(|frame| expand_and_split_frame(frame))
+        .collect();
+    for es in split {
+        out.entry(es.quadrupole_settings)
+            .or_insert(Vec::new())
+            .push(es);
+    }
+
+    // Finally sort each of them internally by retention time.
+    for (_, es) in out.iter_mut() {
+        es.sort_unstable_by(|a, b| a.rt.partial_cmp(&b.rt).unwrap());
+    }
+    out
+}
+
+pub fn par_expand_and_centroid_frames(
+    frames: Vec<Frame>,
+    ims_tol_pct: f64,
+    mz_tol_ppm: f64,
+    ims_converter: &Scan2ImConverter,
+    mz_converter: &Tof2MzConverter,
+) -> HashMap<Option<SingleQuadrupoleSetting>, Vec<ExpandedFrameSlice>> {
+    let split_frames = expand_and_arrange_frames(frames);
+
+    let out: HashMap<Option<SingleQuadrupoleSetting>, Vec<ExpandedFrameSlice>> = split_frames
+        .into_iter()
+        .map(|(qs, frameslices)| {
+            // NOTE: Since the the centroiding runs in paralel over the windows, its ok if this
+            // outer loop is done in series.
+            let start_peaks: usize = frameslices.iter().map(|x| x.len()).sum();
+            let centroided = par_lazy_centroid_frameslices(
+                &frameslices,
+                3,
+                ims_tol_pct,
+                mz_tol_ppm,
+                ims_converter,
+                mz_converter,
+            );
+            let end_peaks: usize = centroided.iter().map(|x| x.len()).sum();
+            debug!(
+                "Peak counts for quad {:?}: raw={}/centroid={}",
+                qs, start_peaks, end_peaks
+            );
+            (qs, centroided)
+        })
+        .collect();
+
+    out
+}
+
+fn centroid_frameslice_window(
+    frameslices: &[ExpandedFrameSlice],
+    ims_tol_pct: f64,
+    mz_tol_ppm: f64,
+    ims_converter: &Scan2ImConverter,
+    mz_converter: &Tof2MzConverter,
+) -> ExpandedFrameSlice {
+    assert!(frameslices.len() > 1, "Expected at least 2 frameslices");
+    let reference_index = frameslices.len() / 2;
+
+    // this is A LOT of cloning ... look into whether it is needed.
+
+    let mut tof_array: Vec<u32> = frameslices
+        .iter()
+        .flat_map(|x| x.tof_indices.clone())
+        .collect();
+
+    let mut ims_array: Vec<usize> = frameslices
+        .iter()
+        .flat_map(|x| x.scan_numbers.clone())
+        .collect();
+    let mut weight_array: Vec<u32> = frameslices
+        .iter()
+        .flat_map(|x| x.intensities.clone())
+        .collect();
+    let mut intensity_array: Vec<u32> = frameslices
+        .iter()
+        .enumerate()
+        .flat_map(|(i, x)| {
+            if i == reference_index {
+                x.intensities.clone()
+            } else {
+                vec![0u32; x.tof_indices.len()]
+            }
+        })
+        .collect();
+
+    let mut tof_order = argsort_by(&tof_array, |x| *x);
+    sort_by_indices_multi!(
+        &mut tof_order,
+        &mut tof_array,
+        &mut ims_array,
+        &mut weight_array,
+        &mut intensity_array
+    );
+
+    let ((mzs, intensities), imss) = lazy_centroid_weighted_frame(
+        &tof_array,
+        &ims_array,
+        &weight_array,
+        &intensity_array,
+        |&tof| tof_tol_range(tof, mz_tol_ppm, mz_converter),
+        |&scan| scan_tol_range(scan, ims_tol_pct, ims_converter),
+    );
+
+    ExpandedFrameSlice {
+        tof_indices: mzs,
+        scan_numbers: imss,
+        intensities,
+        frame_index: frameslices[reference_index].frame_index,
+        rt: frameslices[reference_index].rt,
+        acquisition_type: frameslices[reference_index].acquisition_type,
+        ms_level: frameslices[reference_index].ms_level,
+        quadrupole_settings: frameslices[reference_index].quadrupole_settings,
+        intensity_correction_factor: frameslices[reference_index].intensity_correction_factor,
+        window_group: frameslices[reference_index].window_group,
+        window_subindex: frameslices[reference_index].window_subindex,
+    }
+}
+
+pub fn par_lazy_centroid_frameslices(
+    frameslices: &[ExpandedFrameSlice],
+    window_width: usize,
+    ims_tol_pct: f64,
+    mz_tol_ppm: f64,
+    ims_converter: &Scan2ImConverter,
+    mz_converter: &Tof2MzConverter,
+) -> Vec<ExpandedFrameSlice> {
+    assert!(
+        frameslices
+            .iter()
+            .tuple_windows()
+            .map(|(a, b)| { a.rt < b.rt && a.quadrupole_settings == b.quadrupole_settings })
+            .all(|x| x),
+        "All frames should be sorted by rt and have the same quad settings"
+    );
+
+    assert!(frameslices.len() > window_width);
+
+    let local_lambda = |fss: &[ExpandedFrameSlice]| {
+        centroid_frameslice_window(fss, ims_tol_pct, mz_tol_ppm, ims_converter, mz_converter)
+    };
+
+    frameslices
+        .par_windows(window_width)
+        .map(|window| local_lambda(window))
+        .collect()
 }
 
 #[cfg(test)]

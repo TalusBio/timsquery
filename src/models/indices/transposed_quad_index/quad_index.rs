@@ -9,7 +9,6 @@ use crate::utils::sorting::par_argsort_by;
 use log::debug;
 use log::info;
 use log::trace;
-use rayon::prelude::*;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
 use std::time::Instant;
