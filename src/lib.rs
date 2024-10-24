@@ -8,9 +8,6 @@ pub use crate::traits::aggregator::Aggregator;
 pub use crate::traits::indexed_data::IndexedData;
 pub use crate::traits::tolerance::{HasIntegerID, Tolerance, ToleranceAdapter};
 
-// Re-export utility functions
-pub use crate::utils::sorting::sort_multiple_by;
-
 // Declare modules
 pub mod models;
 pub mod queriable_tims_data;

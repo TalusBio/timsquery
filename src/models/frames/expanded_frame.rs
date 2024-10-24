@@ -1,23 +1,24 @@
-use std::collections::HashMap;
-use std::marker::PhantomData;
-use std::sync::Arc;
-
 use super::single_quad_settings::{
     expand_quad_settings, ExpandedFrameQuadSettings, SingleQuadrupoleSetting,
 };
 use itertools::Itertools;
 use rayon::iter::IntoParallelIterator;
 use rayon::prelude::*;
+use std::collections::HashMap;
+use std::marker::PhantomData;
+use std::sync::Arc;
+use std::time::Instant;
 use timsrust::converters::{Scan2ImConverter, Tof2MzConverter};
 use timsrust::{AcquisitionType, Frame, MSLevel, QuadrupoleSettings};
 
 use super::peak_in_quad::PeakInQuad;
 use crate::sort_by_indices_multi;
+use crate::sort_vecs_by_first;
 use crate::utils::compress_explode::explode_vec;
 use crate::utils::frame_processing::lazy_centroid_weighted_frame;
 use crate::utils::sorting::argsort_by;
 use crate::utils::tolerance_ranges::{scan_tol_range, tof_tol_range};
-use log::debug;
+use log::{debug, info, trace};
 
 /// A frame after expanding the mobility data and re-sorting it by tof.
 #[derive(Debug, Clone)]
@@ -59,19 +60,48 @@ pub struct ExpandedFrameSlice<S: SortingStateTrait> {
     _sorting_state: PhantomData<S>,
 }
 
+fn sort_by_tof2(
+    tof_indices: Vec<u32>,
+    scan_numbers: Vec<usize>,
+    intensities: Vec<u32>,
+) -> ((Vec<u32>, Vec<usize>), Vec<u32>) {
+    let mut combined: Vec<((u32, usize), u32)> = tof_indices
+        .iter()
+        .zip(scan_numbers.iter())
+        .zip(intensities.iter())
+        .map(|((tof, scan), inten)| ((*tof, *scan), *inten))
+        .collect();
+    combined.sort_unstable_by(|a, b| a.0 .0.partial_cmp(&b.0 .0).unwrap());
+    let ((tof_indices, scan_numbers), intensities) = combined.into_iter().unzip();
+    ((tof_indices, scan_numbers), intensities)
+}
+
+// Example of how to use it with your specific types
+fn sort_by_tof_macro(
+    tof_indices: Vec<u32>,
+    scan_numbers: Vec<usize>,
+    intensities: Vec<u32>,
+) -> (Vec<u32>, Vec<usize>, Vec<u32>) {
+    sort_vecs_by_first!(tof_indices, scan_numbers, intensities)
+}
+
 impl<T: SortingStateTrait> ExpandedFrameSlice<T> {
     pub fn sort_by_tof(mut self) -> ExpandedFrameSlice<SortedState> {
-        let mut indices = argsort_by(&self.tof_indices, |x| *x);
-        sort_by_indices_multi!(
-            &mut indices,
-            &mut self.tof_indices,
-            &mut self.scan_numbers,
-            &mut self.intensities
-        );
+        // let mut indices = argsort_by(&self.tof_indices, |x| *x);
+        // sort_by_indices_multi!(
+        //     &mut indices,
+        //     &mut self.tof_indices,
+        //     &mut self.scan_numbers,
+        //     &mut self.intensities
+        // );
+
+        let (tof_indices, scan_numbers, intensities) =
+            sort_by_tof_macro(self.tof_indices, self.scan_numbers, self.intensities);
+
         ExpandedFrameSlice {
-            tof_indices: self.tof_indices,
-            scan_numbers: self.scan_numbers,
-            intensities: self.intensities,
+            tof_indices,
+            scan_numbers,
+            intensities,
             frame_index: self.frame_index,
             rt: self.rt,
             acquisition_type: self.acquisition_type,
@@ -268,6 +298,8 @@ impl ExpandedFrame {
 pub fn expand_and_arrange_frames(
     frames: Vec<Frame>,
 ) -> HashMap<Option<SingleQuadrupoleSetting>, Vec<ExpandedFrameSlice<SortedState>>> {
+    info!("Expanding and arranging frames");
+    let start = Instant::now();
     let mut out = HashMap::new();
     let split: Vec<ExpandedFrameSlice<SortedState>> = frames
         .into_par_iter()
@@ -283,6 +315,8 @@ pub fn expand_and_arrange_frames(
     for (_, es) in out.iter_mut() {
         es.sort_unstable_by(|a, b| a.rt.partial_cmp(&b.rt).unwrap());
     }
+    let end = start.elapsed();
+    info!("Expanding and arranging frames took {:#?}", end);
     out
 }
 
@@ -311,9 +345,11 @@ pub fn par_expand_and_centroid_frames(
                     mz_converter,
                 );
                 let end_peaks: usize = centroided.iter().map(|x| x.len()).sum();
-                debug!(
+                trace!(
                     "Peak counts for quad {:?}: raw={}/centroid={}",
-                    qs, start_peaks, end_peaks
+                    qs,
+                    start_peaks,
+                    end_peaks
                 );
                 (qs, centroided)
             })
@@ -334,20 +370,20 @@ fn centroid_frameslice_window(
 
     // this is A LOT of cloning ... look into whether it is needed.
 
-    let mut tof_array: Vec<u32> = frameslices
+    let tof_array: Vec<u32> = frameslices
         .iter()
         .flat_map(|x| x.tof_indices.clone())
         .collect();
 
-    let mut ims_array: Vec<usize> = frameslices
+    let ims_array: Vec<usize> = frameslices
         .iter()
         .flat_map(|x| x.scan_numbers.clone())
         .collect();
-    let mut weight_array: Vec<u32> = frameslices
+    let weight_array: Vec<u32> = frameslices
         .iter()
         .flat_map(|x| x.intensities.clone())
         .collect();
-    let mut intensity_array: Vec<u32> = frameslices
+    let intensity_array: Vec<u32> = frameslices
         .iter()
         .enumerate()
         .flat_map(|(i, x)| {
@@ -359,14 +395,16 @@ fn centroid_frameslice_window(
         })
         .collect();
 
-    let mut tof_order = argsort_by(&tof_array, |x| *x);
-    sort_by_indices_multi!(
-        &mut tof_order,
-        &mut tof_array,
-        &mut ims_array,
-        &mut weight_array,
-        &mut intensity_array
-    );
+    // let mut tof_order = argsort_by(&tof_array, |x| *x);
+    // sort_by_indices_multi!(
+    //     &mut tof_order,
+    //     &mut tof_array,
+    //     &mut ims_array,
+    //     &mut weight_array,
+    //     &mut intensity_array
+    // );
+    let (tof_array, ims_array, weight_array, intensity_array) =
+        sort_vecs_by_first!(tof_array, ims_array, weight_array, intensity_array);
 
     let ((mzs, intensities), imss) = lazy_centroid_weighted_frame(
         &tof_array,
