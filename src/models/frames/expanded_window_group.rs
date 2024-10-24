@@ -1,6 +1,6 @@
 use std::iter::repeat;
 
-use super::expanded_frame::ExpandedFrameSlice;
+use super::expanded_frame::{ExpandedFrameSlice, SortingStateTrait};
 use super::single_quad_settings::SingleQuadrupoleSetting;
 use timsrust::{AcquisitionType, MSLevel};
 
@@ -18,7 +18,9 @@ pub struct ExpandedWindowGroup {
 }
 
 impl ExpandedWindowGroup {
-    pub fn from_expanded_frame_slices(expanded_frame_slices: Vec<ExpandedFrameSlice>) -> Self {
+    pub fn from_expanded_frame_slices<S: SortingStateTrait>(
+        expanded_frame_slices: Vec<ExpandedFrameSlice<S>>,
+    ) -> Self {
         let num_peaks = expanded_frame_slices
             .iter()
             .map(|x| x.tof_indices.len())

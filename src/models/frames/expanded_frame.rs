@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::marker::PhantomData;
 use std::sync::Arc;
 
 use super::single_quad_settings::{
@@ -10,6 +11,7 @@ use rayon::prelude::*;
 use timsrust::converters::{Scan2ImConverter, Tof2MzConverter};
 use timsrust::{AcquisitionType, Frame, MSLevel, QuadrupoleSettings};
 
+use super::peak_in_quad::PeakInQuad;
 use crate::sort_by_indices_multi;
 use crate::utils::compress_explode::explode_vec;
 use crate::utils::frame_processing::lazy_centroid_weighted_frame;
@@ -32,8 +34,17 @@ pub struct ExpandedFrame {
     pub window_group: u8,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum UnsortedState {}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SortedState {}
+
+pub trait SortingStateTrait {}
+impl SortingStateTrait for UnsortedState {}
+impl SortingStateTrait for SortedState {}
+
 #[derive(Debug, Clone)]
-pub struct ExpandedFrameSlice {
+pub struct ExpandedFrameSlice<S: SortingStateTrait> {
     pub tof_indices: Vec<u32>, // I could Arc<[u32]> if I didnt want to sort by it ...
     pub scan_numbers: Vec<usize>,
     pub intensities: Vec<u32>,
@@ -45,10 +56,11 @@ pub struct ExpandedFrameSlice {
     pub intensity_correction_factor: f64,
     pub window_group: u8,
     pub window_subindex: u8,
+    _sorting_state: PhantomData<S>,
 }
 
-impl ExpandedFrameSlice {
-    pub fn sort_by_tof(&mut self) {
+impl<T: SortingStateTrait> ExpandedFrameSlice<T> {
+    pub fn sort_by_tof(mut self) -> ExpandedFrameSlice<SortedState> {
         let mut indices = argsort_by(&self.tof_indices, |x| *x);
         sort_by_indices_multi!(
             &mut indices,
@@ -56,6 +68,20 @@ impl ExpandedFrameSlice {
             &mut self.scan_numbers,
             &mut self.intensities
         );
+        ExpandedFrameSlice {
+            tof_indices: self.tof_indices,
+            scan_numbers: self.scan_numbers,
+            intensities: self.intensities,
+            frame_index: self.frame_index,
+            rt: self.rt,
+            acquisition_type: self.acquisition_type,
+            ms_level: self.ms_level,
+            quadrupole_settings: self.quadrupole_settings,
+            intensity_correction_factor: self.intensity_correction_factor,
+            window_group: self.window_group,
+            window_subindex: self.window_subindex,
+            _sorting_state: PhantomData,
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -64,6 +90,52 @@ impl ExpandedFrameSlice {
 
     pub fn is_empty(&self) -> bool {
         self.tof_indices.is_empty()
+    }
+}
+
+impl ExpandedFrameSlice<SortedState> {
+    pub fn query_peaks<F>(
+        &self,
+        tof_range: (u32, u32),
+        scan_range: Option<(usize, usize)>,
+        f: &mut F,
+    ) where
+        F: FnMut(PeakInQuad),
+    {
+        let peak_range = {
+            let peak_ind_start = self.tof_indices.partition_point(|x| x < &tof_range.0);
+            let peak_ind_end = self.tof_indices.partition_point(|x| x <= &tof_range.1);
+            peak_ind_start..peak_ind_end
+        };
+
+        match scan_range {
+            Some((min_scan, max_scan)) => {
+                assert!(min_scan <= max_scan);
+            }
+            None => {}
+        };
+
+        for peak_ind in peak_range {
+            let scan_index = self.scan_numbers[peak_ind];
+            match scan_range {
+                Some((min_scan, max_scan)) => {
+                    if scan_index < min_scan || scan_index > max_scan {
+                        continue;
+                    }
+                }
+                None => {}
+            };
+
+            let intensity = self.intensities[peak_ind];
+            let tof_index = self.tof_indices[peak_ind];
+            let retention_time = self.rt;
+            f(PeakInQuad {
+                scan_index,
+                intensity,
+                tof_index,
+                retention_time: retention_time as f32,
+            });
+        }
     }
 }
 
@@ -88,11 +160,11 @@ fn trim_scan_edges(scan_start: usize, scan_end: usize) -> (usize, usize) {
     (new_start, new_end)
 }
 
-fn expand_unfragmented_frame(frame: Frame) -> ExpandedFrameSlice {
+fn expand_unfragmented_frame(frame: Frame) -> ExpandedFrameSlice<SortedState> {
     let scan_numbers = explode_vec(&frame.scan_offsets);
     let intensities = frame.intensities;
     let tof_indices = frame.tof_indices;
-    let mut curr_slice = ExpandedFrameSlice {
+    let curr_slice = ExpandedFrameSlice {
         tof_indices,
         scan_numbers,
         intensities,
@@ -104,15 +176,16 @@ fn expand_unfragmented_frame(frame: Frame) -> ExpandedFrameSlice {
         intensity_correction_factor: frame.intensity_correction_factor,
         window_group: frame.window_group,
         window_subindex: 0u8,
+        _sorting_state: PhantomData::<UnsortedState>,
     };
-    curr_slice.sort_by_tof();
-    curr_slice
+
+    curr_slice.sort_by_tof()
 }
 
 fn expand_fragmented_frame(
     frame: Frame,
     quads: Vec<SingleQuadrupoleSetting>,
-) -> Vec<ExpandedFrameSlice> {
+) -> Vec<ExpandedFrameSlice<SortedState>> {
     let mut out = Vec::with_capacity(quads.len());
     let exploded_scans = explode_vec(&frame.scan_offsets);
     for (i, qs) in quads.into_iter().enumerate() {
@@ -130,7 +203,7 @@ fn expand_fragmented_frame(
         let slice_intensities =
             frame.intensities[tof_index_index_slice_start..tof_index_index_slice_end].to_vec();
 
-        let mut curr_slice = ExpandedFrameSlice {
+        let curr_slice = ExpandedFrameSlice {
             tof_indices: slice_tof_indices,
             scan_numbers: slice_scan_numbers,
             intensities: slice_intensities,
@@ -142,16 +215,16 @@ fn expand_fragmented_frame(
             intensity_correction_factor: frame.intensity_correction_factor,
             window_group: frame.window_group,
             window_subindex: i as u8,
+            _sorting_state: PhantomData::<UnsortedState>,
         };
         // Q: is this sorting twice? since sort before creating the expanded frame slices.
         // TODO: Use the state type pattern to make sure only one sort happens.
-        curr_slice.sort_by_tof();
-        out.push(curr_slice);
+        out.push(curr_slice.sort_by_tof());
     }
     out
 }
 
-pub fn expand_and_split_frame(frame: Frame) -> Vec<ExpandedFrameSlice> {
+pub fn expand_and_split_frame(frame: Frame) -> Vec<ExpandedFrameSlice<SortedState>> {
     let quad_settings = &frame.quadrupole_settings;
     // Q: Can I save a vec allocation if I make the expanded quad_settings
     // To return a vec of builders? or Enum(settings|frame_slice)?
@@ -194,9 +267,9 @@ impl ExpandedFrame {
 
 pub fn expand_and_arrange_frames(
     frames: Vec<Frame>,
-) -> HashMap<Option<SingleQuadrupoleSetting>, Vec<ExpandedFrameSlice>> {
+) -> HashMap<Option<SingleQuadrupoleSetting>, Vec<ExpandedFrameSlice<SortedState>>> {
     let mut out = HashMap::new();
-    let split: Vec<ExpandedFrameSlice> = frames
+    let split: Vec<ExpandedFrameSlice<SortedState>> = frames
         .into_par_iter()
         .flat_map(|frame| expand_and_split_frame(frame))
         .collect();
@@ -219,42 +292,43 @@ pub fn par_expand_and_centroid_frames(
     mz_tol_ppm: f64,
     ims_converter: &Scan2ImConverter,
     mz_converter: &Tof2MzConverter,
-) -> HashMap<Option<SingleQuadrupoleSetting>, Vec<ExpandedFrameSlice>> {
+) -> HashMap<Option<SingleQuadrupoleSetting>, Vec<ExpandedFrameSlice<SortedState>>> {
     let split_frames = expand_and_arrange_frames(frames);
 
-    let out: HashMap<Option<SingleQuadrupoleSetting>, Vec<ExpandedFrameSlice>> = split_frames
-        .into_iter()
-        .map(|(qs, frameslices)| {
-            // NOTE: Since the the centroiding runs in paralel over the windows, its ok if this
-            // outer loop is done in series.
-            let start_peaks: usize = frameslices.iter().map(|x| x.len()).sum();
-            let centroided = par_lazy_centroid_frameslices(
-                &frameslices,
-                3,
-                ims_tol_pct,
-                mz_tol_ppm,
-                ims_converter,
-                mz_converter,
-            );
-            let end_peaks: usize = centroided.iter().map(|x| x.len()).sum();
-            debug!(
-                "Peak counts for quad {:?}: raw={}/centroid={}",
-                qs, start_peaks, end_peaks
-            );
-            (qs, centroided)
-        })
-        .collect();
+    let out: HashMap<Option<SingleQuadrupoleSetting>, Vec<ExpandedFrameSlice<SortedState>>> =
+        split_frames
+            .into_iter()
+            .map(|(qs, frameslices)| {
+                // NOTE: Since the the centroiding runs in paralel over the windows, its ok if this
+                // outer loop is done in series.
+                let start_peaks: usize = frameslices.iter().map(|x| x.len()).sum();
+                let centroided = par_lazy_centroid_frameslices(
+                    &frameslices,
+                    3,
+                    ims_tol_pct,
+                    mz_tol_ppm,
+                    ims_converter,
+                    mz_converter,
+                );
+                let end_peaks: usize = centroided.iter().map(|x| x.len()).sum();
+                debug!(
+                    "Peak counts for quad {:?}: raw={}/centroid={}",
+                    qs, start_peaks, end_peaks
+                );
+                (qs, centroided)
+            })
+            .collect();
 
     out
 }
 
 fn centroid_frameslice_window(
-    frameslices: &[ExpandedFrameSlice],
+    frameslices: &[ExpandedFrameSlice<SortedState>],
     ims_tol_pct: f64,
     mz_tol_ppm: f64,
     ims_converter: &Scan2ImConverter,
     mz_converter: &Tof2MzConverter,
-) -> ExpandedFrameSlice {
+) -> ExpandedFrameSlice<SortedState> {
     assert!(frameslices.len() > 1, "Expected at least 2 frameslices");
     let reference_index = frameslices.len() / 2;
 
@@ -303,6 +377,9 @@ fn centroid_frameslice_window(
         |&scan| scan_tol_range(scan, ims_tol_pct, ims_converter),
     );
 
+    // Make sure everything is sorted ...
+    assert!(mzs.windows(2).all(|x| x[0] <= x[1]));
+
     ExpandedFrameSlice {
         tof_indices: mzs,
         scan_numbers: imss,
@@ -315,17 +392,18 @@ fn centroid_frameslice_window(
         intensity_correction_factor: frameslices[reference_index].intensity_correction_factor,
         window_group: frameslices[reference_index].window_group,
         window_subindex: frameslices[reference_index].window_subindex,
+        _sorting_state: PhantomData::<SortedState>,
     }
 }
 
 pub fn par_lazy_centroid_frameslices(
-    frameslices: &[ExpandedFrameSlice],
+    frameslices: &[ExpandedFrameSlice<SortedState>],
     window_width: usize,
     ims_tol_pct: f64,
     mz_tol_ppm: f64,
     ims_converter: &Scan2ImConverter,
     mz_converter: &Tof2MzConverter,
-) -> Vec<ExpandedFrameSlice> {
+) -> Vec<ExpandedFrameSlice<SortedState>> {
     assert!(
         frameslices
             .iter()
@@ -337,7 +415,7 @@ pub fn par_lazy_centroid_frameslices(
 
     assert!(frameslices.len() > window_width);
 
-    let local_lambda = |fss: &[ExpandedFrameSlice]| {
+    let local_lambda = |fss: &[ExpandedFrameSlice<SortedState>]| {
         centroid_frameslice_window(fss, ims_tol_pct, mz_tol_ppm, ims_converter, mz_converter)
     };
 

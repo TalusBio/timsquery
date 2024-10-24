@@ -1,29 +1,64 @@
-use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
+use serde::Serialize;
 use std::collections::HashMap;
-
-use std::hint::black_box;
+use std::fs::File;
+use std::time::{Duration, Instant};
 use timsquery::{
     models::{
         aggregators::RawPeakIntensityAggregator,
         indices::{
-            raw_file_index::RawFileIndex, transposed_quad_index::QuadSplittedTransposedIndex,
+            expanded_raw_index::ExpandedRawFrameIndex, raw_file_index::RawFileIndex,
+            transposed_quad_index::QuadSplittedTransposedIndex,
         },
     },
-    queriable_tims_data::queriable_tims_data::{query_indexed, query_multi_group},
+    queriable_tims_data::queriable_tims_data::query_multi_group,
     traits::tolerance::DefaultTolerance,
     ElutionGroup,
 };
 
+const NUM_ELUTION_GROUPS: usize = 500;
+const NUM_ITERATIONS: usize = 1;
+
+#[derive(Debug, Serialize)]
+struct BenchmarkIteration {
+    iteration: usize,
+    duration_seconds: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct BenchmarkResult {
+    name: String,
+    context: String,
+    iterations: Vec<BenchmarkIteration>,
+    mean_duration_seconds: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct BenchmarkReport {
+    settings: BenchmarkSettings,
+    results: Vec<BenchmarkResult>,
+    metadata: BenchmarkMetadata,
+}
+
+#[derive(Debug, Serialize)]
+struct BenchmarkSettings {
+    num_elution_groups: usize,
+    num_iterations: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct BenchmarkMetadata {
+    basename: String,
+}
+
+fn duration_to_seconds(duration: Duration) -> f64 {
+    duration.as_secs() as f64 + duration.subsec_nanos() as f64 * 1e-9
+}
+
 fn get_file_from_env() -> (String, String) {
-    // Read from environment variable the raw file path to use
-    // env var name: TIMS_DATA_FILE
-    let raw_file_path = std::env::var("TIMS_DATA_FILE");
-    let raw_file_path = match raw_file_path {
-        Ok(path) => path,
-        Err(_) => panic!("TIMS_DATA_FILE environment variable not set"),
-    };
+    let raw_file_path =
+        std::env::var("TIMS_DATA_FILE").expect("TIMS_DATA_FILE environment variable not set");
 
     let basename = std::path::Path::new(&raw_file_path)
         .file_stem()
@@ -35,8 +70,7 @@ fn get_file_from_env() -> (String, String) {
     (raw_file_path, basename)
 }
 
-const NUM_ELUTION_GROUPS: usize = 500;
-fn build_elution_groups(raw_file_path: String) -> Vec<ElutionGroup<u64>> {
+fn build_elution_groups() -> Vec<ElutionGroup<u64>> {
     const NUM_FRAGMENTS: usize = 10;
     const MAX_RT: f32 = 22.0 * 60.0;
     const MAX_MOBILITY: f32 = 1.5;
@@ -44,187 +78,148 @@ fn build_elution_groups(raw_file_path: String) -> Vec<ElutionGroup<u64>> {
     const MAX_MZ: f64 = 1000.0;
     const MIN_MZ: f64 = 300.0;
 
-    let mut out_egs: Vec<ElutionGroup<u64>> = Vec::with_capacity(NUM_ELUTION_GROUPS);
+    let mut out_egs = Vec::with_capacity(NUM_ELUTION_GROUPS);
     let mut rng = ChaCha8Rng::seed_from_u64(43u64);
 
     for i in 1..NUM_ELUTION_GROUPS {
-        // Rand f32/64 are number from 0-1
         let rt = rng.gen::<f32>() * MAX_RT;
         let mobility = rng.gen::<f32>() * (MAX_MOBILITY - MIN_MOBILITY) + MIN_MOBILITY;
         let mz = rng.gen::<f64>() * (MAX_MZ - MIN_MZ) + MIN_MZ;
 
         let mut fragment_mzs = HashMap::with_capacity(NUM_FRAGMENTS);
-
         for ii in 0..NUM_FRAGMENTS {
             let fragment_mz = rng.gen::<f64>() * (MAX_MZ - MIN_MZ) + MIN_MZ;
-            // let fragment_charge = rng.gen::<u8>() * 3 + 1;
             fragment_mzs.insert(ii as u64, fragment_mz);
         }
-
-        // rand u8 is number from 0-255 ... which is not amazing for us ...
-        // let precursor_charge = rng.gen::<u8>() * 3 + 1;
-        let precursor_charge = 2;
 
         out_egs.push(ElutionGroup {
             id: i as u64,
             rt_seconds: rt,
             mobility,
             precursor_mz: mz,
-            precursor_charge,
+            precursor_charge: 2,
             fragment_mzs,
         });
     }
     out_egs
 }
 
-fn criterion_benchmark(c: &mut Criterion) {
-    let (raw_file_path, basename) = get_file_from_env();
-    let mut group = c.benchmark_group("Encoding Time");
+fn with_benchmark(name: &str, context: &str, f: impl Fn()) -> BenchmarkResult {
+    let mut iterations = Vec::with_capacity(NUM_ITERATIONS);
+    for i in 0..NUM_ITERATIONS {
+        println!("{name} iteration {i}");
+        let start = Instant::now();
+        f();
+        let duration = start.elapsed();
 
-    group.sample_size(10);
-    group.bench_function(
-        BenchmarkId::new("TransposedQuadIndex", basename.clone()),
-        |b| {
-            b.iter_batched(
-                || {},
-                |()| {
-                    QuadSplittedTransposedIndex::from_path(&black_box(raw_file_path.clone()))
-                        .unwrap()
-                },
-                BatchSize::SmallInput,
-            )
-        },
-    );
-    group.bench_function(BenchmarkId::new("RawFileIndex", basename.clone()), |b| {
-        b.iter_batched(
-            || {},
-            |()| RawFileIndex::from_path(&black_box(raw_file_path.clone())).unwrap(),
-            BatchSize::SmallInput,
-        )
+        iterations.push(BenchmarkIteration {
+            iteration: i + 1,
+            duration_seconds: duration_to_seconds(duration),
+        });
+    }
+
+    let mean = iterations.iter().map(|i| i.duration_seconds).sum::<f64>() / NUM_ITERATIONS as f64;
+    BenchmarkResult {
+        name: name.to_string(),
+        context: context.to_string(),
+        iterations,
+        mean_duration_seconds: mean,
+    }
+}
+
+fn run_encoding_benchmark(raw_file_path: &str) -> Vec<BenchmarkResult> {
+    let rfi = with_benchmark("RawFileIndex", "Encoding", || {
+        RawFileIndex::from_path(raw_file_path).unwrap();
+    });
+    let erfi = with_benchmark("ExpandedRawFileIndex", "Encoding", || {
+        ExpandedRawFrameIndex::from_path(raw_file_path).unwrap();
+    });
+    let tqi = with_benchmark("TransposedQuadIndex", "Encoding", || {
+        QuadSplittedTransposedIndex::from_path(raw_file_path).unwrap();
     });
 
-    group.finish();
+    vec![tqi, rfi, erfi]
 }
 
-macro_rules! add_bench_random {
-    ($group:expr, $raw_file_path:expr, $basename:expr, $name:literal, $index_type:ty, $tolerance_type:ty, ) => {
-        $group.bench_function(BenchmarkId::new($name, $basename.clone()), |b| {
-            b.iter_batched(
-                || {
-                    (
-                        <$index_type>::from_path(&($raw_file_path.clone())).unwrap(),
-                        build_elution_groups($raw_file_path.clone()),
-                        <$tolerance_type>::default(),
-                    )
-                },
-                |(index, query_groups, tolerance)| {
-                    let local_lambda = |elution_group: &ElutionGroup<u64>| {
-                        query_indexed(
-                            &index,
-                            &RawPeakIntensityAggregator::new,
-                            &index,
-                            &tolerance,
-                            &elution_group,
-                        )
-                    };
-                    for elution_group in query_groups {
-                        let query_results = local_lambda(&elution_group);
-                        black_box((|_query_results| false)(query_results));
-                    }
-                },
-                BatchSize::PerIteration,
-            )
-        });
+fn run_batch_access_benchmark(raw_file_path: &str) -> Vec<BenchmarkResult> {
+    let query_groups = build_elution_groups();
+    let tolerance = DefaultTolerance::default();
+
+    let rfi_index = RawFileIndex::from_path(raw_file_path).unwrap();
+    let rfi = with_benchmark("RawFileIndex", "BatchAccess", || {
+        let _ = query_multi_group(
+            &rfi_index,
+            &rfi_index,
+            &tolerance,
+            &query_groups,
+            &RawPeakIntensityAggregator::new,
+        );
+    });
+    std::mem::drop(rfi_index);
+
+    let erfi_index = ExpandedRawFrameIndex::from_path(raw_file_path).unwrap();
+    let erfi = with_benchmark("ExpandedRawFileIndex", "BatchAccess", || {
+        let _ = query_multi_group(
+            &erfi_index,
+            &erfi_index,
+            &tolerance,
+            &query_groups,
+            &RawPeakIntensityAggregator::new,
+        );
+    });
+    std::mem::drop(erfi_index);
+
+    let tqi_index = QuadSplittedTransposedIndex::from_path(raw_file_path).unwrap();
+    let tqi = with_benchmark("TransposedQuadIndex", "BatchAccess", || {
+        let _ = query_multi_group(
+            &tqi_index,
+            &tqi_index,
+            &tolerance,
+            &query_groups,
+            &RawPeakIntensityAggregator::new,
+        );
+    });
+    std::mem::drop(tqi_index);
+
+    vec![tqi, rfi, erfi]
+}
+
+fn write_results(results: Vec<BenchmarkResult>, basename: &str) -> std::io::Result<()> {
+    let report = BenchmarkReport {
+        settings: BenchmarkSettings {
+            num_elution_groups: NUM_ELUTION_GROUPS,
+            num_iterations: NUM_ITERATIONS,
+        },
+        results,
+        metadata: BenchmarkMetadata {
+            basename: basename.to_string(),
+        },
     };
-}
-macro_rules! add_bench_optim {
-    ($group:expr, $raw_file_path:expr, $basename:expr, $name:literal, $index_type:ty, $tolerance_type:ty, $query_func:expr,) => {
-        $group.bench_function(BenchmarkId::new($name, $basename.clone()), |b| {
-            b.iter_batched(
-                || {
-                    (
-                        <$index_type>::from_path(&($raw_file_path.clone())).unwrap(),
-                        build_elution_groups($raw_file_path.clone()),
-                        <$tolerance_type>::default(),
-                    )
-                },
-                |(index, query_groups, tolerance)| {
-                    let qr = query_multi_group(
-                        &index,
-                        &index,
-                        &tolerance,
-                        &query_groups,
-                        &RawPeakIntensityAggregator::new,
-                    );
-                    black_box((|_qr| false)(qr));
-                },
-                BatchSize::PerIteration,
-            )
-        });
-    };
+
+    let file = File::create(format!("benchmark_results_{}.json", basename))?;
+    serde_json::to_writer_pretty(file, &report)?;
+    Ok(())
 }
 
-fn thoughput_benchmark_random(c: &mut Criterion) {
+fn main() {
     let (raw_file_path, basename) = get_file_from_env();
-    let mut group = c.benchmark_group("RandomAccessThroughput");
-    group.significance_level(0.05).sample_size(10);
-    group.throughput(criterion::Throughput::Elements(NUM_ELUTION_GROUPS as u64));
+    let mut all_results: Vec<BenchmarkResult> = vec![];
 
-    add_bench_random!(
-        group,
-        raw_file_path,
-        basename,
-        "TransposedQuadIndex",
-        QuadSplittedTransposedIndex,
-        DefaultTolerance,
+    println!(
+        "Run Settings: Elution groups={}, Iterations={}, basename={}",
+        NUM_ELUTION_GROUPS, NUM_ITERATIONS, basename
     );
 
-    add_bench_random!(
-        group,
-        raw_file_path,
-        basename,
-        "RawFileIndex",
-        RawFileIndex,
-        DefaultTolerance,
-    );
+    println!("Running encoding benchmarks...");
+    let encoding_results = run_encoding_benchmark(&raw_file_path);
+    all_results.extend(encoding_results);
 
-    group.finish();
+    println!("Running batch access benchmarks...");
+    let batch_results = run_batch_access_benchmark(&raw_file_path);
+    all_results.extend(batch_results);
+
+    match write_results(all_results, &basename) {
+        Ok(_) => println!("Results written to benchmark_results_{}.json", basename),
+        Err(e) => eprintln!("Error writing results: {}", e),
+    }
 }
-
-fn thoughput_benchmark_optim(c: &mut Criterion) {
-    env_logger::init();
-    let (raw_file_path, basename) = get_file_from_env();
-    let mut group = c.benchmark_group("BatchAccessThroughput");
-    group.significance_level(0.05).sample_size(10);
-    group.throughput(criterion::Throughput::Elements(NUM_ELUTION_GROUPS as u64));
-
-    add_bench_optim!(
-        group,
-        raw_file_path,
-        basename,
-        "TransposedQuadIndex",
-        QuadSplittedTransposedIndex,
-        DefaultTolerance,
-        query_multi_group,
-    );
-
-    add_bench_optim!(
-        group,
-        raw_file_path,
-        basename,
-        "RawFileIndex",
-        RawFileIndex,
-        DefaultTolerance,
-        query_multi_group,
-    );
-
-    group.finish();
-}
-
-criterion_group!(
-    benches,
-    thoughput_benchmark_optim,
-    criterion_benchmark,
-    thoughput_benchmark_random,
-);
-criterion_main!(benches);

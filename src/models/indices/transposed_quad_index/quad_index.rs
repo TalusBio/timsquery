@@ -1,6 +1,7 @@
 use super::peak_bucket::PeakBucketBuilder;
 use super::peak_bucket::{PeakBucket, PeakInBucket};
-use crate::models::frames::expanded_frame::ExpandedFrameSlice;
+use crate::models::frames::expanded_frame::{ExpandedFrameSlice, SortingStateTrait};
+use crate::models::frames::peak_in_quad::PeakInQuad;
 use crate::models::frames::raw_peak::RawPeak;
 use crate::models::frames::single_quad_settings::SingleQuadrupoleSetting;
 use crate::sort_by_indices_multi;
@@ -77,17 +78,10 @@ impl TransposedQuadIndex {
         tof_range: (u32, u32),
         scan_range: Option<(usize, usize)>,
         rt_range: Option<FrameRTTolerance>,
-        // ) -> Vec<PeakInQuad> {
     ) -> impl Iterator<Item = PeakInQuad> + '_ {
-        trace!(
-            "TransposedQuadIndex::query_peaks tof_range: {:?}, scan_range: {:?}, rt_range: {:?}",
-            tof_range,
-            scan_range,
-            rt_range
-        );
-        // TODO reimplement as an iterator ...
         // This version is not compatible with the borrow checker unless I collect the vec...
         // which will do for now for prototyping.
+        // TODO: make this a single type and convert upstream.
         let frame_index_range = self.convert_to_local_frame_range(rt_range);
 
         self.peak_buckets
@@ -96,8 +90,6 @@ impl TransposedQuadIndex {
                 pb.query_peaks(scan_range, frame_index_range)
                     .map(move |p| PeakInQuad::from_peak_in_bucket(p, *tof_index))
             })
-        // Coult I just return an Arc<[intensities]> + ...
-        // If I made the peak buckets sparse, I could make it ... not be an option.
     }
 
     fn convert_to_local_frame_range(
@@ -141,25 +133,6 @@ impl TransposedQuadIndex {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct PeakInQuad {
-    pub scan_index: usize,
-    pub intensity: u32,
-    pub retention_time: f32,
-    pub tof_index: u32,
-}
-
-impl From<PeakInQuad> for RawPeak {
-    fn from(peak_in_quad: PeakInQuad) -> Self {
-        RawPeak {
-            scan_index: peak_in_quad.scan_index,
-            tof_index: peak_in_quad.tof_index,
-            intensity: peak_in_quad.intensity,
-            retention_time: peak_in_quad.retention_time,
-        }
-    }
-}
-
 impl PeakInQuad {
     pub fn from_peak_in_bucket(peak_in_bucket: PeakInBucket, tof_index: u32) -> Self {
         Self {
@@ -170,7 +143,6 @@ impl PeakInQuad {
         }
     }
 }
-
 // Q: Do I use this? Should I just have it as the frame index as
 // an option?
 #[derive(Debug, Clone, Copy)]
@@ -222,7 +194,7 @@ impl TransposedQuadIndexBuilder {
         self.frame_rts.extend(other.frame_rts);
     }
 
-    pub fn add_frame_slice(&mut self, slice: ExpandedFrameSlice) {
+    pub fn add_frame_slice<T: SortingStateTrait>(&mut self, slice: ExpandedFrameSlice<T>) {
         self.int_slices.push(slice.intensities);
         self.tof_slices.push(slice.tof_indices);
         self.scan_slices.push(slice.scan_numbers);

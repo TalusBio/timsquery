@@ -1,12 +1,15 @@
-use super::quad_index::{
-    FrameRTTolerance, PeakInQuad, TransposedQuadIndex, TransposedQuadIndexBuilder,
-};
+use super::quad_index::{FrameRTTolerance, TransposedQuadIndex, TransposedQuadIndexBuilder};
+use crate::models::adapters::FragmentIndexAdapter;
 use crate::models::elution_group::ElutionGroup;
 use crate::models::frames::expanded_frame::{
-    expand_and_split_frame, par_expand_and_centroid_frames, ExpandedFrameSlice,
+    expand_and_split_frame, par_expand_and_centroid_frames, ExpandedFrameSlice, SortingStateTrait,
 };
+use crate::models::frames::peak_in_quad::PeakInQuad;
 use crate::models::frames::raw_peak::RawPeak;
-use crate::models::frames::single_quad_settings::SingleQuadrupoleSetting;
+
+use crate::models::frames::single_quad_settings::{
+    get_matching_quad_settings, SingleQuadrupoleSetting, SingleQuadrupoleSettingIndex,
+};
 use crate::models::queries::FragmentGroupIndexQuery;
 use crate::models::queries::PrecursorIndexQuery;
 use crate::traits::indexed_data::IndexedData;
@@ -33,12 +36,12 @@ use timsrust::TimsRustError;
 
 pub struct QuadSplittedTransposedIndex {
     precursor_index: TransposedQuadIndex,
-    fragment_indices: HashMap<SingleQuadrupoleSetting, TransposedQuadIndex>,
+    fragment_indices: HashMap<SingleQuadrupoleSettingIndex, TransposedQuadIndex>,
     flat_quad_settings: Vec<SingleQuadrupoleSetting>,
     rt_converter: Frame2RtConverter,
     pub mz_converter: Tof2MzConverter,
     pub im_converter: Scan2ImConverter,
-    metadata: Metadata,
+    adapter: FragmentIndexAdapter,
 }
 
 impl Debug for QuadSplittedTransposedIndex {
@@ -62,14 +65,7 @@ impl QuadSplittedTransposedIndex {
     ) where
         F: FnMut(PeakInQuad),
     {
-        trace!(
-            "QuadSplittedTransposedIndex::query_peaks tof_range: {:?}, scan_range: {:?}, rt_range: {:?}, precursor_mz_range: {:?}",
-            tof_range,
-            scan_range,
-            rt_range,
-            precursor_mz_range,
-        );
-        let matching_quads: Vec<SingleQuadrupoleSetting> = self
+        let matching_quads: Vec<SingleQuadrupoleSettingIndex> = self
             .get_matching_quad_settings(precursor_mz_range, scan_range)
             .collect();
         trace!("matching_quads: {:?}", matching_quads);
@@ -78,7 +74,7 @@ impl QuadSplittedTransposedIndex {
 
     fn query_precursor_peaks<F>(
         &self,
-        matching_quads: &[SingleQuadrupoleSetting],
+        matching_quads: &[SingleQuadrupoleSettingIndex],
         tof_range: (u32, u32),
         scan_range: Option<(usize, usize)>,
         rt_range: Option<FrameRTTolerance>,
@@ -86,8 +82,6 @@ impl QuadSplittedTransposedIndex {
     ) where
         F: FnMut(PeakInQuad),
     {
-        let rt_range = rt_range.map(|x| x.to_frame_index_range(&self.rt_converter));
-
         for quad in matching_quads {
             let tqi = self
                 .fragment_indices
@@ -102,108 +96,8 @@ impl QuadSplittedTransposedIndex {
         &self,
         precursor_mz_range: (f64, f64),
         scan_range: Option<(usize, usize)>,
-    ) -> impl Iterator<Item = SingleQuadrupoleSetting> + '_ {
-        self.flat_quad_settings
-            .iter()
-            .filter(move |qs| {
-                (qs.ranges.isolation_low <= precursor_mz_range.1)
-                    && (qs.ranges.isolation_high >= precursor_mz_range.0)
-            })
-            .filter(move |qs| {
-                match scan_range {
-                    Some((min_scan, max_scan)) => {
-                        assert!(qs.ranges.scan_start <= qs.ranges.scan_end);
-                        assert!(min_scan <= max_scan);
-
-                        // Above quad
-                        // Quad                   [----------]
-                        // Query                               [------]
-                        let above_quad = qs.ranges.scan_end < min_scan;
-
-                        // Below quad
-                        // Quad                  [------]
-                        // Query       [------]
-                        let below_quad = qs.ranges.scan_start > max_scan;
-
-                        if above_quad || below_quad {
-                            // This quad is completely outside the scan range
-                            false
-                        } else {
-                            true
-                        }
-                    }
-                    None => true,
-                }
-            })
-            .cloned()
-    }
-
-    fn queries_from_elution_elements_impl<FH: Clone + Eq + Serialize + Hash + Send + Sync>(
-        &self,
-        tol: &dyn crate::traits::tolerance::Tolerance,
-        elution_group: &crate::models::elution_group::ElutionGroup<FH>,
-    ) -> FragmentGroupIndexQuery<FH> {
-        let rt_range = tol.rt_range(elution_group.rt_seconds);
-        let mobility_range = tol.mobility_range(elution_group.mobility);
-        let precursor_mz_range = tol.mz_range(elution_group.precursor_mz);
-        let quad_range = tol.quad_range(elution_group.precursor_mz, elution_group.precursor_charge);
-
-        let mz_index_range = (
-            self.mz_converter.invert(precursor_mz_range.0) as u32,
-            self.mz_converter.invert(precursor_mz_range.1) as u32,
-        );
-        let mobility_range = match mobility_range {
-            Some(mobility_range) => mobility_range,
-            None => (self.metadata.lower_im as f32, self.metadata.upper_im as f32),
-        };
-        let mobility_index_range = (
-            self.im_converter.invert(mobility_range.0) as usize,
-            self.im_converter.invert(mobility_range.1) as usize,
-        );
-        let rt_range = match rt_range {
-            Some(rt_range) => rt_range,
-            None => (self.metadata.lower_rt as f32, self.metadata.upper_rt as f32),
-        };
-        let frame_index_range = (
-            self.rt_converter.invert(rt_range.0) as usize,
-            self.rt_converter.invert(rt_range.1) as usize,
-        );
-
-        assert!(frame_index_range.0 <= frame_index_range.1);
-        assert!(mz_index_range.0 <= mz_index_range.1);
-        // Since mobilities get mixed up bc low scan ranges are high 1/k0, I
-        // Just make sure they are sorted here.
-        let mobility_index_range = (
-            mobility_index_range.0.min(mobility_index_range.1),
-            mobility_index_range.1.max(mobility_index_range.0),
-        );
-
-        let precursor_query = PrecursorIndexQuery {
-            frame_index_range,
-            mz_index_range,
-            mobility_index_range,
-            isolation_mz_range: quad_range,
-        };
-
-        let fqs = elution_group
-            .fragment_mzs
-            .iter()
-            .map(|(k, v)| {
-                let mz_range = tol.mz_range(*v);
-                (
-                    k.clone(),
-                    (
-                        self.mz_converter.invert(mz_range.0) as u32,
-                        self.mz_converter.invert(mz_range.1) as u32,
-                    ),
-                )
-            })
-            .collect();
-
-        FragmentGroupIndexQuery {
-            mz_index_ranges: fqs,
-            precursor_query,
-        }
+    ) -> impl Iterator<Item = SingleQuadrupoleSettingIndex> + '_ {
+        get_matching_quad_settings(&self.flat_quad_settings, precursor_mz_range, scan_range)
     }
 }
 
@@ -298,7 +192,7 @@ impl QuadSplittedTransposedIndexBuilder {
         }
     }
 
-    fn add_frame_slice(&mut self, frame_slice: ExpandedFrameSlice) {
+    fn add_frame_slice<S: SortingStateTrait>(&mut self, frame_slice: ExpandedFrameSlice<S>) {
         // Add key if it doesnt exist ...
         self.indices
             .entry(frame_slice.quadrupole_settings)
@@ -435,7 +329,7 @@ impl QuadSplittedTransposedIndexBuilder {
         let mut precursor_index: Option<TransposedQuadIndex> = None;
         for (qi, qs) in built.into_iter() {
             if let Some(qs) = qs {
-                indices.insert(qs, qi);
+                indices.insert(qs.index, qi);
                 flat_quad_settings.push(qs);
             } else {
                 precursor_index = Some(qi);
@@ -456,7 +350,7 @@ impl QuadSplittedTransposedIndexBuilder {
             rt_converter: self.rt_converter.unwrap(),
             mz_converter: self.mz_converter.unwrap(),
             im_converter: self.im_converter.unwrap(),
-            metadata: self.metadata.unwrap(),
+            adapter: FragmentIndexAdapter::from(self.metadata.unwrap()),
         }
     }
 }
@@ -634,7 +528,7 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
                     fragment_query.precursor_query.frame_index_range,
                 ));
 
-                let local_quad_vec: Vec<SingleQuadrupoleSetting> = self
+                let local_quad_vec: Vec<SingleQuadrupoleSettingIndex> = self
                     .get_matching_quad_settings(precursor_mz_range, scan_range)
                     .collect();
 
@@ -662,6 +556,6 @@ impl<FH: Copy + Clone + Serialize + Eq + Hash + Send + Sync>
         tol: &dyn crate::traits::tolerance::Tolerance,
         elution_group: &ElutionGroup<FH>,
     ) -> FragmentGroupIndexQuery<FH> {
-        self.queries_from_elution_elements_impl(tol, elution_group)
+        self.adapter.query_from_elution_group(tol, elution_group)
     }
 }
