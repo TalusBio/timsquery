@@ -2,6 +2,7 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::env;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -23,6 +24,74 @@ use timsquery::{
 const NUM_ELUTION_GROUPS: usize = 1000;
 const NUM_ITERATIONS: usize = 1;
 
+#[derive(Debug, Clone)]
+struct EnvConfig {
+    tims_data_file: PathBuf,
+    file_stem: String,
+    skip_highmem: bool,
+    skip_slow: bool,
+    skip_build: bool,
+    skip_query: bool,
+}
+
+impl EnvConfig {
+    fn new() -> Self {
+        let mut tims_data_file = String::new();
+        let mut skip_highmem = false;
+        // let mut skip_slow = false;
+        let mut skip_slow = true;
+        let mut skip_build = false;
+        let mut skip_query = false;
+
+        for (key, value) in env::vars() {
+            match key.as_str() {
+                "TIMS_DATA_FILE" => tims_data_file = value,
+                "SKIP_HIGHMEM" => skip_highmem = value == "1",
+                // "SKIP_SLOW" => skip_slow = value == "1",
+                // I hate this double negative but I want to make slow benches
+                // opt-in rather than opt-out.
+                "RUN_SLOW" => skip_slow = value != "1",
+                "SKIP_BUILD" => skip_build = value == "1",
+                "SKIP_QUERY" => skip_query = value == "1",
+                _ => {}
+            }
+        }
+
+        if tims_data_file.is_empty() {
+            panic!("TIMS_DATA_FILE environment variable not set");
+        }
+
+        // Check that the file exists and is readable
+
+        let tims_data_file = Path::new(&tims_data_file);
+        if !tims_data_file.exists() {
+            panic!("TIMS_DATA_FILE={} does not exist", tims_data_file.display());
+        }
+        let file_stem = tims_data_file.file_stem().unwrap().to_str().unwrap();
+
+        let out = Self {
+            tims_data_file: tims_data_file.to_path_buf(),
+            file_stem: file_stem.to_string(),
+            skip_highmem,
+            skip_slow,
+            skip_build,
+            skip_query,
+        };
+
+        println!("Env config: {:#?}", out);
+
+        out
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BenchmarkTag {
+    HighMem,
+    Slow,
+    Build,
+    Query,
+}
+
 #[derive(Debug, Serialize)]
 struct BenchmarkIteration {
     iteration: usize,
@@ -33,9 +102,12 @@ struct BenchmarkIteration {
 struct BenchmarkResult {
     name: String,
     context: String,
-    iterations: Vec<BenchmarkIteration>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    iterations: Option<Vec<BenchmarkIteration>>,
     mean_duration_seconds: f64,
     mean_duration_human_readable: String,
+    setup_time_seconds: f64,
+    setup_time_human_readable: String,
     note: Option<String>,
 }
 
@@ -60,20 +132,6 @@ struct BenchmarkMetadata {
 
 fn duration_to_seconds(duration: Duration) -> f64 {
     duration.as_secs() as f64 + duration.subsec_nanos() as f64 * 1e-9
-}
-
-fn get_file_from_env() -> (String, String) {
-    let raw_file_path =
-        std::env::var("TIMS_DATA_FILE").expect("TIMS_DATA_FILE environment variable not set");
-
-    let basename = std::path::Path::new(&raw_file_path)
-        .file_stem()
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .to_string();
-
-    (raw_file_path, basename)
 }
 
 fn build_elution_groups() -> Vec<ElutionGroup<u64>> {
@@ -110,76 +168,153 @@ fn build_elution_groups() -> Vec<ElutionGroup<u64>> {
     out_egs
 }
 
-fn with_benchmark(name: &str, context: &str, f: impl Fn() -> Option<String>) -> BenchmarkResult {
-    let mut iterations = Vec::with_capacity(NUM_ITERATIONS);
-    let mut durations = Vec::with_capacity(NUM_ITERATIONS);
-    let mut extras = None;
-    let glob_start = Instant::now();
-    let mut i = 0;
-    while (glob_start.elapsed().as_millis() < 1000) || (i < NUM_ITERATIONS) {
-        println!("{name} iteration {i}");
-        let start = Instant::now();
-        if let Some(out) = f() {
-            extras = Some(out);
+impl EnvConfig {
+    fn with_benchmark<T>(
+        &self,
+        name: &str,
+        context: &str,
+        setup_fn: impl Fn() -> T,
+        f: impl Fn(&T, usize) -> Option<String>,
+        tags: &[BenchmarkTag],
+    ) -> Option<BenchmarkResult> {
+        if self.skip_slow && tags.contains(&BenchmarkTag::Slow) {
+            println!("Skipping slow benchmark for {} {}", name, context);
+            return None;
         }
 
-        let duration = start.elapsed();
+        if self.skip_highmem && tags.contains(&BenchmarkTag::HighMem) {
+            println!("Skipping highmem benchmark {} {}", name, context);
+            return None;
+        }
 
-        iterations.push(BenchmarkIteration {
-            iteration: i + 1,
-            duration_seconds: duration_to_seconds(duration),
-        });
-        durations.push(duration);
-        i += 1;
-    }
+        if self.skip_build && tags.contains(&BenchmarkTag::Build) {
+            println!("Skipping build benchmark {} {}", name, context);
+            return None;
+        }
 
-    let mean = iterations.iter().map(|i| i.duration_seconds).sum::<f64>() / (i as f64);
-    let avg_duration: Duration = durations.iter().sum::<Duration>() / i as u32;
-    let mean_duration_human_readable = format!("{:?}", avg_duration);
+        if self.skip_query && tags.contains(&BenchmarkTag::Query) {
+            println!("Skipping query benchmark {} {}", name, context);
+            return None;
+        }
 
-    BenchmarkResult {
-        name: name.to_string(),
-        context: context.to_string(),
-        iterations,
-        mean_duration_seconds: mean,
-        mean_duration_human_readable,
-        note: extras,
+        println!("{} {} Tagged with {:?}", name, context, tags);
+        let sst = Instant::now();
+        println!("Setting up {} {}", name, context);
+        let setup = setup_fn();
+        let setup_elap = sst.elapsed();
+        println!("Setup took {:#?}", setup_elap);
+
+        let mut iterations = Vec::with_capacity(NUM_ITERATIONS);
+        let mut durations = Vec::with_capacity(NUM_ITERATIONS);
+        let mut extras = None;
+        let glob_start = Instant::now();
+        let mut i = 0;
+        while (glob_start.elapsed().as_millis() < 1000) || (i < NUM_ITERATIONS) {
+            if i < 10 || i % 100 == 0 {
+                println!("{name} iteration {i}");
+            }
+            let start = Instant::now();
+            if let Some(out) = f(&setup, i) {
+                if i < 3 {
+                    println!("{}", out);
+                }
+                extras = Some(out);
+            }
+
+            let duration = start.elapsed();
+
+            iterations.push(BenchmarkIteration {
+                iteration: i + 1,
+                duration_seconds: duration_to_seconds(duration),
+            });
+            durations.push(duration);
+            i += 1;
+        }
+
+        let mean = iterations.iter().map(|i| i.duration_seconds).sum::<f64>() / (i as f64);
+        let avg_duration: Duration = durations.iter().sum::<Duration>() / i as u32;
+        let mean_duration_human_readable = format!("{:?}", avg_duration);
+
+        println!("Mean duration: {:?}", mean_duration_human_readable);
+
+        Some(BenchmarkResult {
+            name: name.to_string(),
+            context: context.to_string(),
+            iterations: Some(iterations),
+            mean_duration_seconds: mean,
+            mean_duration_human_readable,
+            setup_time_seconds: setup_elap.as_secs_f64(),
+            setup_time_human_readable: format!("{:?}", setup_elap),
+            note: extras,
+        })
     }
 }
 
-fn run_encoding_benchmark(raw_file_path: &str) -> Vec<BenchmarkResult> {
+fn run_encoding_benchmark(raw_file_path: &PathBuf, env_config: EnvConfig) -> Vec<BenchmarkResult> {
+    let raw_file_path = raw_file_path.to_str().unwrap();
     let mut out = vec![];
-    let rfi = with_benchmark("RawFileIndex", "Encoding", || {
-        RawFileIndex::from_path(raw_file_path).unwrap();
-        None
-    });
+    let rfi = env_config.with_benchmark(
+        "RawFileIndex",
+        "Encoding",
+        || {},
+        |_, _| {
+            RawFileIndex::from_path(raw_file_path).unwrap();
+            None
+        },
+        &[BenchmarkTag::Build],
+    );
     out.push(rfi);
-    let erfic = with_benchmark("ExpandedRawFileIndexCentroided", "Encoding", || {
-        ExpandedRawFrameIndex::from_path(raw_file_path).unwrap();
-        None
-    });
+    let erfic = env_config.with_benchmark(
+        "ExpandedRawFileIndexCentroided",
+        "Encoding",
+        || {},
+        |_, _| {
+            ExpandedRawFrameIndex::from_path_centroided(raw_file_path).unwrap();
+            None
+        },
+        &[BenchmarkTag::Build],
+    );
     out.push(erfic);
-    let erfi = with_benchmark("ExpandedRawFileIndex", "Encoding", || {
-        ExpandedRawFrameIndex::from_path(raw_file_path).unwrap();
-        None
-    });
-    out.push(erfi);
-    let tqi = with_benchmark("TransposedQuadIndex", "Encoding", || {
-        QuadSplittedTransposedIndex::from_path(raw_file_path).unwrap();
-        None
-    });
-    out.push(tqi);
 
-    let tqic = with_benchmark("TransposedQuadIndexCentroided", "Encoding", || {
-        QuadSplittedTransposedIndex::from_path_centroided(raw_file_path).unwrap();
-        None
-    });
+    let erfi = env_config.with_benchmark(
+        "ExpandedRawFileIndex",
+        "Encoding",
+        || {},
+        |_, _| {
+            ExpandedRawFrameIndex::from_path(raw_file_path).unwrap();
+            None
+        },
+        &[BenchmarkTag::HighMem, BenchmarkTag::Build],
+    );
+    out.push(erfi);
+    let tqi = env_config.with_benchmark(
+        "TransposedQuadIndex",
+        "Encoding",
+        || {},
+        |_, _| {
+            QuadSplittedTransposedIndex::from_path(raw_file_path).unwrap();
+            None
+        },
+        &[BenchmarkTag::HighMem, BenchmarkTag::Build],
+    );
+    out.push(tqi);
+    let tqic = env_config.with_benchmark(
+        "TransposedQuadIndexCentroided",
+        "Encoding",
+        || {},
+        |_, _| {
+            QuadSplittedTransposedIndex::from_path_centroided(raw_file_path).unwrap();
+            None
+        },
+        &[BenchmarkTag::Build],
+    );
     out.push(tqic);
 
-    out
+    out.into_iter().flatten().collect()
 }
 
-fn run_batch_access_benchmark(raw_file_path: &str) -> Vec<BenchmarkResult> {
+fn run_batch_access_benchmark(raw_file_path: &Path, env_config: EnvConfig) -> Vec<BenchmarkResult> {
+    let raw_file_path = raw_file_path.to_str().unwrap();
     let mut out = vec![];
     let query_groups = build_elution_groups();
     let tolerance_with_rt = DefaultTolerance {
@@ -202,128 +337,131 @@ fn run_batch_access_benchmark(raw_file_path: &str) -> Vec<BenchmarkResult> {
     // TODO: Refactor this ... there is a lot of code duplication but over different types ... int
     // ion thoty this is a good place for a macro.
 
-    let rfi_index = RawFileIndex::from_path(raw_file_path).unwrap();
     for (tolerance, tol_name) in tolerances.clone() {
-        if tol_name == "full_rt" {
-            println!("Skipping full_rt");
-            continue;
-        }
-        let rfi = with_benchmark("RawFileIndex", &format!("BatchAccess_{}", tol_name), || {
-            let tmp = query_multi_group(
-                &rfi_index,
-                &rfi_index,
-                &tolerance,
-                &query_groups,
-                &RawPeakIntensityAggregator::new,
-            );
-            let tot: u64 = tmp.into_iter().sum();
-            let out = format!("RawFileIndex::query_multi_group aggregated {}", tot);
-            println!("{}", out);
-            Some(out)
-        });
-        out.push(rfi);
-    }
-    std::mem::drop(rfi_index);
-
-    let erfi_index = ExpandedRawFrameIndex::from_path(raw_file_path).unwrap();
-    for (tolerance, tol_name) in tolerances.clone() {
-        let erfi = with_benchmark(
-            "ExpandedRawFileIndex",
+        let local_tags = if tol_name == "full_rt" {
+            vec![BenchmarkTag::Slow, BenchmarkTag::Query]
+        } else {
+            vec![BenchmarkTag::Query]
+        };
+        let rfi = env_config.with_benchmark(
+            "RawFileIndex",
             &format!("BatchAccess_{}", tol_name),
-            || {
+            || RawFileIndex::from_path(raw_file_path).unwrap(),
+            |index, i| {
                 let tmp = query_multi_group(
-                    &erfi_index,
-                    &erfi_index,
+                    index,
+                    index,
                     &tolerance,
                     &query_groups,
                     &RawPeakIntensityAggregator::new,
                 );
                 let tot: u64 = tmp.into_iter().sum();
-                let out = format!("ExpandedRawFileIndex::query_multi_group aggregated {}", tot);
-                println!("{}", out);
+                let out = format!("RawFileIndex::query_multi_group aggregated {} ", tot,);
                 Some(out)
             },
+            &local_tags,
         );
-        out.push(erfi);
+        out.push(rfi);
     }
-    std::mem::drop(erfi_index);
 
-    let erfic_index = ExpandedRawFrameIndex::from_path_centroided(raw_file_path).unwrap();
     for (tolerance, tol_name) in tolerances.clone() {
-        let erfic = with_benchmark(
-            "ExpandedRawFileIndexCentroided",
+        let erfi = env_config.with_benchmark(
+            "ExpandedRawFileIndex",
             &format!("BatchAccess_{}", tol_name),
-            || {
+            || ExpandedRawFrameIndex::from_path(raw_file_path).unwrap(),
+            |index, i| {
                 let tmp = query_multi_group(
-                    &erfic_index,
-                    &erfic_index,
+                    index,
+                    index,
                     &tolerance,
                     &query_groups,
                     &RawPeakIntensityAggregator::new,
                 );
                 let tot: u64 = tmp.into_iter().sum();
                 let out = format!(
-                    "ExpandedRawFileIndexCentroided::query_multi_group aggregated {}",
-                    tot
+                    "ExpandedRawFileIndex::query_multi_group aggregated {} ",
+                    tot,
                 );
-                println!("{}", out);
                 Some(out)
             },
+            &[BenchmarkTag::HighMem, BenchmarkTag::Query],
+        );
+        out.push(erfi);
+    }
+
+    for (tolerance, tol_name) in tolerances.clone() {
+        let erfic = env_config.with_benchmark(
+            "ExpandedRawFileIndexCentroided",
+            &format!("BatchAccess_{}", tol_name),
+            || ExpandedRawFrameIndex::from_path_centroided(raw_file_path).unwrap(),
+            |index, i| {
+                let tmp = query_multi_group(
+                    index,
+                    index,
+                    &tolerance,
+                    &query_groups,
+                    &RawPeakIntensityAggregator::new,
+                );
+                let tot: u64 = tmp.into_iter().sum();
+                let out = format!(
+                    "ExpandedRawFileIndexCentroided::query_multi_group aggregated {} ",
+                    tot,
+                );
+                Some(out)
+            },
+            &[BenchmarkTag::Query],
         );
         out.push(erfic);
     }
-    std::mem::drop(erfic_index);
 
-    let tqi_index = QuadSplittedTransposedIndex::from_path(raw_file_path).unwrap();
     for (tolerance, tol_name) in tolerances.clone() {
-        let tqi = with_benchmark(
+        let tqi = env_config.with_benchmark(
             "TransposedQuadIndex",
             &format!("BatchAccess_{}", tol_name),
-            || {
+            || QuadSplittedTransposedIndex::from_path(raw_file_path).unwrap(),
+            |index, i| {
                 let tmp = query_multi_group(
-                    &tqi_index,
-                    &tqi_index,
+                    index,
+                    index,
                     &tolerance,
                     &query_groups,
                     &RawPeakIntensityAggregator::new,
                 );
                 let tot: u64 = tmp.into_iter().sum();
-                let out = format!("TransposedQuadIndex::query_multi_group aggregated {}", tot);
-                println!("{}", out);
+                let out = format!("TransposedQuadIndex::query_multi_group aggregated {} ", tot,);
                 Some(out)
             },
+            &[BenchmarkTag::HighMem, BenchmarkTag::Query],
         );
         out.push(tqi);
     }
-    std::mem::drop(tqi_index);
 
-    let tqic_index = QuadSplittedTransposedIndex::from_path_centroided(raw_file_path).unwrap();
     for (tolerance, tol_name) in tolerances.clone() {
-        let tqi = with_benchmark(
+        let tqi = env_config.with_benchmark(
             "TransposedQuadIndexCentroided",
             &format!("BatchAccess_{}", tol_name),
-            || {
+            || QuadSplittedTransposedIndex::from_path_centroided(raw_file_path).unwrap(),
+            |index, i| {
                 let tmp = query_multi_group(
-                    &tqic_index,
-                    &tqic_index,
+                    index,
+                    index,
                     &tolerance,
                     &query_groups,
                     &RawPeakIntensityAggregator::new,
                 );
                 let tot: u64 = tmp.into_iter().sum();
-                let out = format!("TransposedQuadIndex::query_multi_group aggregated {}", tot);
-                println!("{}", out);
+                let out = format!("TransposedQuadIndex::query_multi_group aggregated {} ", tot,);
                 Some(out)
             },
+            &[BenchmarkTag::Query],
         );
         out.push(tqi);
     }
-    std::mem::drop(tqic_index);
-    out
+    out.into_iter().flatten().collect()
 }
 
 fn write_results(
-    report: BenchmarkReport,
+    mut report: BenchmarkReport,
     basename: &str,
     parent: &Path,
 ) -> std::io::Result<(PathBuf, String)> {
@@ -331,13 +469,26 @@ fn write_results(
     let file = File::create(&filepath)?;
     serde_json::to_writer_pretty(file, &report)?;
     let out = serde_json::to_string_pretty(&report)?;
-    Ok((filepath, out))
+
+    for result in report.results.iter_mut() {
+        result.iterations = None;
+    }
+    let slim_filepath = parent.join(format!("slim_benchmark_results_{}.json", basename));
+    let slim_file = File::create(&slim_filepath)?;
+    serde_json::to_writer_pretty(slim_file, &report)?;
+    let slim_out = serde_json::to_string_pretty(&report)?;
+
+    Ok((filepath, slim_out))
 }
 
 fn main() {
     env_logger::init();
     let st = Instant::now();
-    let (raw_file_path, basename) = get_file_from_env();
+
+    let env_config = EnvConfig::new();
+    let raw_file_path = env_config.tims_data_file.clone();
+    let basename = env_config.file_stem.clone();
+
     let file_parent = std::path::Path::new(&raw_file_path)
         .parent()
         .expect("Expected to find a parent directory");
@@ -349,11 +500,11 @@ fn main() {
     );
 
     println!("Running encoding benchmarks...");
-    let encoding_results = run_encoding_benchmark(&raw_file_path);
+    let encoding_results = run_encoding_benchmark(&raw_file_path, env_config.clone());
     all_results.extend(encoding_results);
 
     println!("Running batch access benchmarks...");
-    let batch_results = run_batch_access_benchmark(&raw_file_path);
+    let batch_results = run_batch_access_benchmark(&raw_file_path, env_config.clone());
     all_results.extend(batch_results);
     let report = BenchmarkReport {
         settings: BenchmarkSettings {

@@ -2,17 +2,16 @@ use super::quad_index::{FrameRTTolerance, TransposedQuadIndex, TransposedQuadInd
 use crate::models::adapters::FragmentIndexAdapter;
 use crate::models::elution_group::ElutionGroup;
 use crate::models::frames::expanded_frame::{
-    expand_and_split_frame, par_expand_and_centroid_frames, ExpandedFrameSlice, SortingStateTrait,
+    expand_and_split_frame, par_read_and_expand_frames, DataReadingError, ExpandedFrameSlice,
+    FrameProcessingConfig, SortingStateTrait,
 };
 use crate::models::frames::peak_in_quad::PeakInQuad;
 use crate::models::frames::raw_peak::RawPeak;
-
 use crate::models::frames::single_quad_settings::{
     get_matching_quad_settings, SingleQuadrupoleSetting, SingleQuadrupoleSettingIndex,
 };
 use crate::models::queries::FragmentGroupIndexQuery;
-use crate::models::queries::PrecursorIndexQuery;
-use crate::traits::indexed_data::IndexedData;
+use crate::traits::indexed_data::QueriableData;
 use crate::utils::display::{glimpse_vec, GlimpseConfig};
 use crate::ToleranceAdapter;
 use log::{debug, info, trace};
@@ -23,9 +22,7 @@ use std::fmt::Debug;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::time::Instant;
-use timsrust::converters::{
-    ConvertableDomain, Frame2RtConverter, Scan2ImConverter, Tof2MzConverter,
-};
+use timsrust::converters::{Frame2RtConverter, Scan2ImConverter, Tof2MzConverter};
 use timsrust::readers::{FrameReader, MetadataReader};
 use timsrust::Frame;
 use timsrust::Metadata;
@@ -140,7 +137,7 @@ impl Display for QuadSplittedTransposedIndex {
 }
 
 impl QuadSplittedTransposedIndex {
-    pub fn from_path(path: &str) -> Result<Self, TimsRustError> {
+    pub fn from_path(path: &str) -> Result<Self, DataReadingError> {
         let st = Instant::now();
         info!("Building transposed quad index from path {}", path);
         let tmp = QuadSplittedTransposedIndexBuilder::from_path(path)?;
@@ -151,7 +148,7 @@ impl QuadSplittedTransposedIndex {
         Ok(out)
     }
 
-    pub fn from_path_centroided(path: &str) -> Result<Self, TimsRustError> {
+    pub fn from_path_centroided(path: &str) -> Result<Self, DataReadingError> {
         let st = Instant::now();
         info!(
             "Building CENTROIDED transposed quad index from path {}",
@@ -207,10 +204,22 @@ impl QuadSplittedTransposedIndexBuilder {
             .add_frame_slice(frame_slice);
     }
 
+    fn from_path(path: &str) -> Result<Self, DataReadingError> {
+        Self::from_path_base(path, FrameProcessingConfig::NotCentroided)
+    }
+
+    fn from_path_centroided(path: &str) -> Result<Self, DataReadingError> {
+        let config = FrameProcessingConfig::default_centroided();
+        Self::from_path_base(path, config)
+    }
+
     // TODO: I think i should split this into two functions, one that starts the builder
     // and one that adds the frameslices, maybe even have a config struct that dispatches
     // the right preprocessing steps.
-    fn from_path(path: &str) -> Result<Self, TimsRustError> {
+    fn from_path_base(
+        path: &str,
+        centroid_config: FrameProcessingConfig,
+    ) -> Result<Self, DataReadingError> {
         let file_reader = FrameReader::new(path)?;
 
         let sql_path = std::path::Path::new(path).join("analysis.tdf");
@@ -226,62 +235,17 @@ impl QuadSplittedTransposedIndexBuilder {
             added_peaks: 0,
         };
 
-        let out2: Result<Vec<Self>, TimsRustError> = (0..file_reader.len())
-            .into_par_iter()
-            .map(|id| file_reader.get(id))
-            .chunks(100)
-            .map(|frames| {
-                let mut out = Self::new();
-                for frame in frames {
-                    let frame = frame?;
-                    out.add_frame(frame);
-                }
-                Ok(out)
-            })
-            .collect();
-
-        let out2 = out2?.into_iter().fold(Self::new(), |mut x, y| {
-            x.fold(y);
-            x
-        });
-        final_out.fold(out2);
-
-        Ok(final_out)
-    }
-
-    fn from_path_centroided(path: &str) -> Result<Self, TimsRustError> {
-        let file_reader = FrameReader::new(path)?;
-
-        let sql_path = std::path::Path::new(path).join("analysis.tdf");
-        let meta_converters = MetadataReader::new(&sql_path)?;
-
-        let out_meta_converters = meta_converters.clone();
-        let mut final_out = Self {
-            indices: HashMap::new(),
-            rt_converter: Some(meta_converters.rt_converter),
-            mz_converter: Some(meta_converters.mz_converter),
-            im_converter: Some(meta_converters.im_converter),
-            metadata: Some(out_meta_converters),
-            added_peaks: 0,
-        };
+        let centroid_config = centroid_config
+            .with_converters(meta_converters.im_converter, meta_converters.mz_converter);
 
         let st = Instant::now();
-        let all_frames = file_reader.get_all().into_iter().flatten().collect();
-        let read_elap = st.elapsed();
-        debug!("Reading all frames took {:#?}", read_elap);
-        let st = Instant::now();
-        let centroided_split_frames = par_expand_and_centroid_frames(
-            all_frames,
-            1.5,
-            15.0,
-            &meta_converters.im_converter,
-            &meta_converters.mz_converter,
-        );
+        let split_frames = par_read_and_expand_frames(&file_reader, centroid_config)?;
+
         let centroided_elap = st.elapsed();
-        debug!("Centroiding took {:#?}", centroided_elap);
+        debug!("Reading + Centroiding took {:#?}", centroided_elap);
 
         let st = Instant::now();
-        let out2: Result<Vec<Self>, TimsRustError> = centroided_split_frames
+        let out2: Result<Vec<Self>, TimsRustError> = split_frames
             .into_par_iter()
             .map(|(q, frameslices)| {
                 let mut out = Self::new();
@@ -300,8 +264,8 @@ impl QuadSplittedTransposedIndexBuilder {
         let build_elap = st.elapsed();
 
         info!(
-            "Reading all frames took {:#?}, centroiding took {:#?}, building took {:#?}",
-            read_elap, centroided_elap, build_elap
+            "Reading all frames + centroiding took {:#?}, building took {:#?}",
+            centroided_elap, build_elap
         );
 
         Ok(final_out)
@@ -356,7 +320,7 @@ impl QuadSplittedTransposedIndexBuilder {
 }
 
 impl<FH: Hash + Copy + Clone + Serialize + Eq + Send + Sync>
-    IndexedData<FragmentGroupIndexQuery<FH>, RawPeak> for QuadSplittedTransposedIndex
+    QueriableData<FragmentGroupIndexQuery<FH>, RawPeak> for QuadSplittedTransposedIndex
 {
     fn query(&self, fragment_query: &FragmentGroupIndexQuery<FH>) -> Vec<RawPeak> {
         let precursor_mz_range = (
@@ -385,7 +349,7 @@ impl<FH: Hash + Copy + Clone + Serialize + Eq + Send + Sync>
             .collect()
     }
 
-    fn add_query<O, AG: crate::Aggregator<RawPeak, Output = O>>(
+    fn add_query<O, AG: crate::Aggregator<Item = RawPeak, Output = O>>(
         &self,
         fragment_query: &FragmentGroupIndexQuery<FH>,
         aggregator: &mut AG,
@@ -413,7 +377,7 @@ impl<FH: Hash + Copy + Clone + Serialize + Eq + Send + Sync>
             })
     }
 
-    fn add_query_multi_group<O, AG: crate::Aggregator<RawPeak, Output = O>>(
+    fn add_query_multi_group<O, AG: crate::Aggregator<Item = RawPeak, Output = O>>(
         &self,
         fragment_queries: &[FragmentGroupIndexQuery<FH>],
         aggregator: &mut [AG],
@@ -450,7 +414,7 @@ impl<FH: Hash + Copy + Clone + Serialize + Eq + Send + Sync>
 // ============================================================================
 
 impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
-    IndexedData<FragmentGroupIndexQuery<FH>, (RawPeak, FH)> for QuadSplittedTransposedIndex
+    QueriableData<FragmentGroupIndexQuery<FH>, (RawPeak, FH)> for QuadSplittedTransposedIndex
 {
     fn query(&self, fragment_query: &FragmentGroupIndexQuery<FH>) -> Vec<(RawPeak, FH)> {
         let precursor_mz_range = (
@@ -480,7 +444,7 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
             .collect()
     }
 
-    fn add_query<O, AG: crate::Aggregator<(RawPeak, FH), Output = O>>(
+    fn add_query<O, AG: crate::Aggregator<Item = (RawPeak, FH), Output = O>>(
         &self,
         fragment_query: &FragmentGroupIndexQuery<FH>,
         aggregator: &mut AG,
@@ -508,7 +472,7 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
             })
     }
 
-    fn add_query_multi_group<O, AG: crate::Aggregator<(RawPeak, FH), Output = O>>(
+    fn add_query_multi_group<O, AG: crate::Aggregator<Item = (RawPeak, FH), Output = O>>(
         &self,
         fragment_queries: &[FragmentGroupIndexQuery<FH>],
         aggregator: &mut [AG],

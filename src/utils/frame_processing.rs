@@ -1,7 +1,7 @@
-use log::warn;
+use crate::sort_vecs_by_first;
+use log::{info, warn};
 use std::cmp::Ordering;
 use std::ops::RangeInclusive;
-use timsrust::converters::{Scan2ImConverter, Tof2MzConverter};
 
 pub fn squash_frame(
     mz_array: &[f32],
@@ -40,14 +40,6 @@ pub fn squash_frame(
         let ss_start = mz_array.partition_point(|&x| x < left_e);
         let ss_end = mz_array.partition_point(|&x| x <= right_e);
 
-        let slice_width = ss_end - ss_start;
-        let local_num_touched = touched[ss_start..ss_end].iter().filter(|&&x| x).count();
-        let local_num_untouched = slice_width - local_num_touched;
-
-        if local_num_touched == slice_width {
-            continue;
-        }
-
         let mut curr_intensity = 0.0;
         let mut curr_weighted_mz = 0.0;
 
@@ -55,6 +47,8 @@ pub fn squash_frame(
             if !touched[i] && intensity_array[i] > 0.0 {
                 curr_intensity += intensity_array[i];
                 curr_weighted_mz += mz_array[i] * intensity_array[i];
+                touched[i] = true;
+                global_num_touched += 1;
             }
         }
 
@@ -65,7 +59,6 @@ pub fn squash_frame(
             agg_mz[idx] = curr_weighted_mz;
 
             touched[ss_start..ss_end].iter_mut().for_each(|x| *x = true);
-            global_num_touched += local_num_untouched;
         }
 
         if global_num_touched == arr_len {
@@ -88,91 +81,188 @@ pub fn squash_frame(
 pub type TofIntensityVecs = (Vec<u32>, Vec<u32>);
 pub type CentroidedVecs = (TofIntensityVecs, Vec<usize>);
 
-pub fn lazy_centroid_weighted_frame(
-    tof_array: &[u32],
-    ims_array: &[usize],
-    weight_array: &[u32],
-    intensity_array: &[u32],
-    tof_tol_range_fn: impl Fn(&u32) -> RangeInclusive<u32>,
-    ims_tol_range_fn: impl Fn(&usize) -> RangeInclusive<usize>,
+fn sort_n_check(
+    agg_intensity: Vec<u32>,
+    agg_tof: Vec<u32>,
+    agg_ims: Vec<usize>,
+) -> ((Vec<u32>, Vec<u32>), Vec<usize>) {
+    let (tof_array, ims_array, intensity_array) =
+        sort_vecs_by_first!(agg_tof, agg_ims, agg_intensity);
+
+    if let Some(x) = intensity_array.last() {
+        assert!(*x > 0);
+        let max_tof = tof_array.iter().max().expect("At least one element");
+        assert!(*max_tof < (u32::MAX - 1));
+    }
+    ((tof_array, intensity_array), ims_array)
+}
+
+pub struct PeakArrayRefs<'a> {
+    pub tof_array: &'a [u32],
+    pub ims_array: &'a [usize],
+    pub intensity_array: &'a [u32],
+}
+
+impl<'a> PeakArrayRefs<'a> {
+    pub fn new(
+        tof_array: &'a [u32],
+        ims_array: &'a [usize],
+        intensity_array: &'a [u32],
+    ) -> PeakArrayRefs<'a> {
+        // TODO make the asserts optional at compile time.
+        assert!(tof_array.len() == intensity_array.len());
+        assert!(tof_array.len() == ims_array.len());
+        assert!(
+            tof_array.windows(2).all(|x| x[0] <= x[1]),
+            "Expected tof array to be sorted"
+        );
+        Self {
+            tof_array,
+            ims_array,
+            intensity_array,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.tof_array.len()
+    }
+}
+
+/// Splits a global index into a major and minor that
+/// matches elements in a collection.
+///
+/// As an example if there is a slice of slices, the major index
+/// is the index of the slice and the minor index is the index
+/// of the element in the slice.
+///
+/// Thus if we have      [[0,1,2], [3,4,5], [6,7,8]]
+/// the major indice are   0,0,0    1,1,1    2,2,2
+/// and the minor          0,1,2    0,1,2    0,1,2
+///
+///
+fn index_split(index: usize, slice_sizes: &[usize]) -> (usize, usize) {
+    let mut index = index;
+    for (i, slice_size) in slice_sizes.iter().enumerate() {
+        if index < *slice_size {
+            return (i, index);
+        }
+        index -= *slice_size;
+    }
+    panic!("Index {} is out of bounds", index);
+}
+
+// TODO: Refactor this function
+pub fn lazy_centroid_weighted_frame<'a>(
+    peak_refs: &'a [PeakArrayRefs<'a>],
+    reference_index: usize,
+    max_peaks: usize,
+    tof_tol_range_fn: impl Fn(u32) -> RangeInclusive<u32>,
+    ims_tol_range_fn: impl Fn(usize) -> RangeInclusive<usize>,
 ) -> CentroidedVecs {
-    let arr_len = tof_array.len();
+    let slice_sizes: Vec<usize> = peak_refs.iter().map(|x| x.len()).collect();
+    let tot_size: usize = slice_sizes.iter().sum();
+    let ref_arrays = &peak_refs[reference_index];
+    let num_arrays = peak_refs.len();
+    assert!(num_arrays > 1);
+    let arr_len = ref_arrays.len();
+    let initial_tot_intensity = ref_arrays
+        .intensity_array
+        .iter()
+        .map(|x| *x as u64)
+        .sum::<u64>();
+
     const MIN_WEIGHT_PRESERVE: u64 = 50;
 
-    // TODO make the asserts optional at compile time.
-    assert!(
-        tof_array.windows(2).all(|x| x[0] <= x[1]),
-        "Expected tof array to be sorted"
-    );
-    assert_eq!(
-        arr_len,
-        intensity_array.len(),
-        "Expected tof and intensity arrays to be the same length"
-    );
-    assert_eq!(
-        arr_len,
-        weight_array.len(),
-        "Expected tof and weight arrays to be the same length"
-    );
-    assert_eq!(
-        arr_len,
-        ims_array.len(),
-        "Expected tof and ims arrays to be the same length"
-    );
-
-    let mut touched = vec![false; arr_len];
+    let mut touched = vec![false; tot_size];
     let mut global_num_touched = 0;
+    let mut num_added = 0;
 
     // We will be iterating in decreasing order of intensity
-    let mut order: Vec<usize> = (0..arr_len).collect();
+    let mut order: Vec<usize> = (0..tot_size).collect();
     order.sort_unstable_by(|&a, &b| {
-        weight_array[b]
-            .partial_cmp(&weight_array[a])
+        let (a_major, a_minor) = index_split(a, &slice_sizes);
+        let (b_major, b_minor) = index_split(b, &slice_sizes);
+
+        let a_intensity = peak_refs[a_major].intensity_array[a_minor];
+        let b_intensity = peak_refs[b_major].intensity_array[b_minor];
+
+        b_intensity
+            .partial_cmp(&a_intensity)
             .unwrap_or(Ordering::Equal)
     });
 
-    let mut agg_tof = vec![0; arr_len];
-    let mut agg_intensity = vec![0; arr_len];
-    // We will not be returning the weights.
-    // let mut agg_weight = vec![0; arr_len];
-    let mut agg_ims = vec![0; arr_len];
+    assert!({
+        let (first_major, first_minor) = index_split(order[0], &slice_sizes);
+        let (last_major, last_minor) = index_split(order[tot_size - 1], &slice_sizes);
+
+        let first_intensity = peak_refs[first_major].intensity_array[first_minor];
+        let last_intensity = peak_refs[last_major].intensity_array[last_minor];
+
+        first_intensity >= last_intensity
+    });
+
+    // TODO explore if making vecs with capacity and appedning is better...
+    let capacity = max_peaks.min(arr_len);
+    let mut agg_tof = Vec::with_capacity(capacity);
+    let mut agg_intensity = Vec::with_capacity(capacity);
+    let mut agg_ims = Vec::with_capacity(capacity);
 
     for idx in order {
+        let (major_idx, minor_idx) = index_split(idx, &slice_sizes);
+
         if touched[idx] {
             continue;
         }
 
-        let tof = tof_array[idx];
-        let ims = ims_array[idx];
-        let tof_range = tof_tol_range_fn(&tof);
-        let ims_range = ims_tol_range_fn(&ims);
-
-        let ss_start = tof_array.partition_point(|x| x < tof_range.start());
-        let ss_end = tof_array.partition_point(|x| x <= tof_range.end());
+        let tof = peak_refs[major_idx].tof_array[minor_idx];
+        let ims = peak_refs[major_idx].ims_array[minor_idx];
+        let this_intensity = peak_refs[major_idx].intensity_array[minor_idx] as u64;
+        let tof_range = tof_tol_range_fn(tof);
+        let ims_range = ims_tol_range_fn(ims);
 
         let mut curr_intensity = 0u64;
         let mut curr_weight = 0u64;
         let mut curr_agg_tof = 0u64;
         let mut curr_agg_ims = 0u64;
 
-        for i in ss_start..ss_end {
-            if !touched[i] && intensity_array[i] > 0 && ims_range.contains(&ims_array[i]) {
-                let local_weight = weight_array[i] as u64;
-                curr_intensity += intensity_array[i] as u64;
-                curr_agg_tof += tof_array[i] as u64 * local_weight;
-                curr_agg_ims += ims_array[i] as u64 * local_weight;
-                curr_weight += local_weight;
+        let mut local_offset_touched = 0;
+        for ii in 0..num_arrays {
+            let local_peak_refs = &peak_refs[ii];
+            let ss_start = local_peak_refs
+                .tof_array
+                .partition_point(|x| x < tof_range.start());
+            let ss_end = local_peak_refs
+                .tof_array
+                .partition_point(|x| x <= tof_range.end());
+            for i in ss_start..ss_end {
+                let ti = local_offset_touched + i;
+                if !touched[ti] && ims_range.contains(&local_peak_refs.ims_array[i]) {
+                    // Peaks are always weighted but not always intense!
+                    let local_intensity = local_peak_refs.intensity_array[i] as u64;
+                    if ii == reference_index {
+                        curr_intensity += local_intensity;
+                        global_num_touched += 1;
+                    }
+                    curr_agg_tof += local_peak_refs.tof_array[i] as u64 * local_intensity;
+                    curr_agg_ims += local_peak_refs.ims_array[i] as u64 * local_intensity;
+                    curr_weight += local_intensity;
+                    touched[ti] = true;
+                }
             }
+            local_offset_touched += local_peak_refs.len();
         }
 
-        if curr_intensity > 0 && curr_weight > 0 {
-            agg_intensity[idx] = u32::try_from(curr_intensity).expect("Expected to fit in u32");
-            agg_tof[idx] = (curr_agg_tof / curr_weight) as u32;
-            agg_ims[idx] = (curr_agg_ims / curr_weight) as usize;
-
-            for i in ss_start..ss_end {
-                touched[i] = true;
-                global_num_touched += 1;
+        if curr_intensity > this_intensity {
+            agg_intensity.push(u32::try_from(curr_intensity).expect("Expected to fit in u32"));
+            let calc_tof = (curr_agg_tof / curr_weight) as u32;
+            let calc_ims = (curr_agg_ims / curr_weight) as usize;
+            assert!(tof_range.contains(&calc_tof));
+            assert!(ims_range.contains(&calc_ims));
+            agg_tof.push(calc_tof);
+            agg_ims.push(calc_ims);
+            num_added += 1;
+            if num_added == max_peaks {
+                break;
             }
         }
 
@@ -182,18 +272,36 @@ pub fn lazy_centroid_weighted_frame(
     }
 
     // Drop the zeros and sort by mz (tof)
-    let mut res: Vec<((u32, u32), usize)> = agg_tof
-        .into_iter()
-        .zip(agg_intensity.into_iter())
-        .zip(agg_ims.into_iter())
-        .filter(|&((_, intensity), ims)| (intensity > 0) & (ims > 0))
-        .collect();
+    let out = sort_n_check(agg_intensity, agg_tof, agg_ims);
+    let tot_final_intensity = out.0 .1.iter().map(|x| *x as u64).sum::<u64>();
+    let inten_ratio = tot_final_intensity as f64 / initial_tot_intensity as f64;
+    assert!(initial_tot_intensity >= tot_final_intensity);
 
-    res.sort_unstable_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
-    let output_len = res.len();
-    if arr_len > 500 && (output_len == arr_len) {
-        warn!("Output length is the same as input length, this is probably a bug");
+    let output_len = out.0 .0.len();
+    let compression_ratio = output_len as f64 / arr_len as f64;
+    assert!(num_added == output_len);
+
+    // 80% of the intensity being preserved sounds like a good cutoff.
+    if output_len == max_peaks && inten_ratio < 0.80 {
+        info!(
+            "Frame trimmed to max peaks ({}), preserved intensity {}/{} intensity ratio: {} compression_ratio: {} if this is not acceptable consider increasing the parameter.",
+            max_peaks, tot_final_intensity, initial_tot_intensity, inten_ratio, compression_ratio,
+        );
     }
 
-    res.into_iter().unzip()
+    if arr_len > 5000 && (output_len == arr_len) {
+        warn!("Output length is the same as input length, this is probably a bug");
+        warn!("Intensity ratio {:?}", inten_ratio);
+        warn!("initial_tot_intensity: {:?}", initial_tot_intensity);
+        warn!("tot_final_intensity: {:?}", tot_final_intensity);
+        warn!(
+            "First tof {} -> Range {:?}",
+            out.0 .0[0],
+            tof_tol_range_fn(out.0 .0[0])
+        );
+        panic!();
+        // warn!("agg_intensity: {:?}", out.0 .0);
+    }
+
+    out
 }

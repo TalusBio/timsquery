@@ -2,14 +2,12 @@ use super::peak_bucket::PeakBucketBuilder;
 use super::peak_bucket::{PeakBucket, PeakInBucket};
 use crate::models::frames::expanded_frame::{ExpandedFrameSlice, SortingStateTrait};
 use crate::models::frames::peak_in_quad::PeakInQuad;
-use crate::models::frames::raw_peak::RawPeak;
 use crate::models::frames::single_quad_settings::SingleQuadrupoleSetting;
 use crate::sort_by_indices_multi;
 use crate::utils::display::{glimpse_vec, GlimpseConfig};
 use crate::utils::sorting::par_argsort_by;
 use log::debug;
 use log::info;
-use log::trace;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
 use std::time::Instant;
@@ -212,7 +210,7 @@ impl TransposedQuadIndexBuilder {
         let max_tof = *self
             .tof_slices
             .iter()
-            .map(|x| x.iter().max().unwrap())
+            .filter_map(|x| x.iter().max())
             .max()
             .unwrap();
         let mut tof_counts = vec![0usize; max_tof as usize + 1];

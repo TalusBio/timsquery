@@ -27,7 +27,8 @@ impl ExtractedIonChromatomobilogram {
     }
 }
 
-impl Aggregator<RawPeak> for ExtractedIonChromatomobilogram {
+impl Aggregator for ExtractedIonChromatomobilogram {
+    type Item = RawPeak;
     type Output = ChromatomobilogramVectorArrayTuples;
 
     fn add(&mut self, peak: &RawPeak) {
@@ -162,7 +163,8 @@ impl ChromatomobilogramStatsArrays {
     }
 }
 
-impl Aggregator<RawPeak> for ChromatomobilogramStats {
+impl Aggregator for ChromatomobilogramStats {
+    type Item = RawPeak;
     type Output = ChromatomobilogramStatsArrays;
 
     fn add(&mut self, peak: &RawPeak) {

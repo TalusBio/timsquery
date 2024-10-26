@@ -10,7 +10,7 @@ pub struct PrecursorIndexQuery {
 }
 
 #[derive(Debug, Clone)]
-pub struct FragmentGroupIndexQuery<FH: Clone + Eq + Hash + Send + Sync> {
+pub struct FragmentGroupIndexQuery<FH: Clone + Eq + Hash + Send + Sync + Copy> {
     pub mz_index_ranges: HashMap<FH, (u32, u32)>,
     pub precursor_query: PrecursorIndexQuery,
 }

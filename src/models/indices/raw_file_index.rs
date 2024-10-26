@@ -4,7 +4,7 @@ use crate::models::frames::raw_frames::frame_elems_matching;
 use crate::models::frames::raw_peak::RawPeak;
 use crate::models::queries::{FragmentGroupIndexQuery, NaturalPrecursorQuery, PrecursorIndexQuery};
 use crate::traits::aggregator::Aggregator;
-use crate::traits::indexed_data::IndexedData;
+use crate::traits::indexed_data::QueriableData;
 use crate::ElutionGroup;
 use crate::ToleranceAdapter;
 use log::trace;
@@ -60,7 +60,7 @@ impl RawFileIndex {
         'c,
         'b: 'c,
         'a: 'b,
-        FH: Clone + Eq + Serialize + Hash + Debug + Send + Sync,
+        FH: Clone + Eq + Serialize + Hash + Debug + Send + Sync + Copy,
     >(
         &'a self,
         fqs: &'b FragmentGroupIndexQuery<FH>,
@@ -148,7 +148,9 @@ impl RawFileIndex {
         }
     }
 
-    fn queries_from_elution_elements_impl<FH: Clone + Eq + Serialize + Hash + Send + Sync>(
+    fn queries_from_elution_elements_impl<
+        FH: Clone + Eq + Serialize + Hash + Send + Sync + Copy,
+    >(
         &self,
         tol: &dyn crate::traits::tolerance::Tolerance,
         elution_elements: &crate::models::elution_group::ElutionGroup<FH>,
@@ -183,7 +185,7 @@ impl RawFileIndex {
 }
 
 impl<FH: Hash + Copy + Clone + Serialize + Eq + Debug + Send + Sync>
-    IndexedData<FragmentGroupIndexQuery<FH>, RawPeak> for RawFileIndex
+    QueriableData<FragmentGroupIndexQuery<FH>, RawPeak> for RawFileIndex
 {
     fn query(&self, fragment_query: &FragmentGroupIndexQuery<FH>) -> Vec<RawPeak> {
         let mut out = Vec::new();
@@ -191,7 +193,7 @@ impl<FH: Hash + Copy + Clone + Serialize + Eq + Debug + Send + Sync>
         out
     }
 
-    fn add_query<O, AG: Aggregator<RawPeak, Output = O>>(
+    fn add_query<O, AG: Aggregator<Item = RawPeak, Output = O>>(
         &self,
         fragment_query: &FragmentGroupIndexQuery<FH>,
         aggregator: &mut AG,
@@ -199,7 +201,7 @@ impl<FH: Hash + Copy + Clone + Serialize + Eq + Debug + Send + Sync>
         self.apply_on_query(fragment_query, &mut |peak, _| aggregator.add(&peak));
     }
 
-    fn add_query_multi_group<O, AG: crate::Aggregator<RawPeak, Output = O>>(
+    fn add_query_multi_group<O, AG: crate::Aggregator<Item = RawPeak, Output = O>>(
         &self,
         fragment_queries: &[FragmentGroupIndexQuery<FH>],
         aggregator: &mut [AG],
@@ -211,7 +213,7 @@ impl<FH: Hash + Copy + Clone + Serialize + Eq + Debug + Send + Sync>
     }
 }
 
-impl<FH: Hash + Serialize + Eq + Clone + Send + Sync>
+impl<FH: Hash + Serialize + Eq + Clone + Send + Sync + Copy>
     ToleranceAdapter<FragmentGroupIndexQuery<FH>, ElutionGroup<FH>> for RawFileIndex
 {
     fn query_from_elution_group(

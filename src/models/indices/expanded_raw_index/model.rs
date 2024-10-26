@@ -1,9 +1,8 @@
 use crate::models::adapters::FragmentIndexAdapter;
 use crate::models::elution_group::ElutionGroup;
-use crate::models::frames::expanded_frame::ExpandedFrame;
 use crate::models::frames::expanded_frame::{
-    expand_and_arrange_frames, expand_and_split_frame, par_expand_and_centroid_frames,
-    ExpandedFrameSlice, SortedState,
+    par_read_and_expand_frames, DataReadingError, ExpandedFrameSlice, FrameProcessingConfig,
+    SortedState,
 };
 use crate::models::frames::peak_in_quad::PeakInQuad;
 use crate::models::frames::raw_peak::RawPeak;
@@ -11,19 +10,16 @@ use crate::models::frames::single_quad_settings::{
     get_matching_quad_settings, SingleQuadrupoleSetting, SingleQuadrupoleSettingIndex,
 };
 use crate::models::queries::FragmentGroupIndexQuery;
-use crate::traits::indexed_data::IndexedData;
+use crate::traits::indexed_data::QueriableData;
 use crate::ToleranceAdapter;
-use log::{debug, info};
+use log::info;
 use rayon::prelude::*;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::time::Instant;
-use timsrust::converters::{
-    ConvertableDomain, Frame2RtConverter, Scan2ImConverter, Tof2MzConverter,
-};
-use timsrust::readers::{FrameReader, FrameReaderError, MetadataReader};
-use timsrust::{QuadrupoleSettings, TimsRustError};
+use timsrust::converters::{Frame2RtConverter, Scan2ImConverter, Tof2MzConverter};
+use timsrust::readers::{FrameReader, MetadataReader};
 
 type QuadSettingsIndex = usize;
 
@@ -115,27 +111,32 @@ impl ExpandedRawFrameIndex {
         }
     }
 
-    pub fn from_path_centroided(path: &str) -> Result<Self, TimsRustError> {
+    pub fn from_path_centroided(path: &str) -> Result<Self, DataReadingError> {
+        let config = FrameProcessingConfig::default_centroided();
+        Self::from_path_base(path, config)
+    }
+
+    pub fn from_path_base(
+        path: &str,
+        centroid_config: FrameProcessingConfig,
+    ) -> Result<Self, DataReadingError> {
+        info!(
+            "Building ExpandedRawFrameIndex from path {} config {:?}",
+            path, centroid_config,
+        );
         let file_reader = FrameReader::new(path)?;
 
         let sql_path = std::path::Path::new(path).join("analysis.tdf");
         let meta_converters = MetadataReader::new(&sql_path)?;
+        let centroid_config = centroid_config.with_converters(
+            meta_converters.im_converter.clone(),
+            meta_converters.mz_converter.clone(),
+        );
 
         let st = Instant::now();
-        let all_frames = file_reader.get_all().into_iter().flatten().collect();
-        let read_elap = st.elapsed();
-        info!("Reading all frames took {:#?}", read_elap);
-        let st = Instant::now();
-        // TODO: Expose this parameter as a config option.
-        let centroided_split_frames = par_expand_and_centroid_frames(
-            all_frames,
-            1.5,
-            15.0,
-            &meta_converters.im_converter,
-            &meta_converters.mz_converter,
-        );
+        let centroided_split_frames = par_read_and_expand_frames(&file_reader, centroid_config)?;
         let centroided_elap = st.elapsed();
-        info!("Centroiding took {:#?}", centroided_elap);
+        info!("Reading + Centroiding took {:#?}", centroided_elap);
 
         let mut out_ms2_frames = HashMap::new();
         let mut out_ms1_frames: Option<ExpandedSliceBundle> = None;
@@ -168,58 +169,13 @@ impl ExpandedRawFrameIndex {
         Ok(out)
     }
 
-    pub fn from_path(path: &str) -> Result<Self, TimsRustError> {
-        // NOTE: I am just copy-pasting the centroided version. If I keep both I will
-        // abstract it and make dispatch in a config ...
-
-        let file_reader = FrameReader::new(path)?;
-
-        let sql_path = std::path::Path::new(path).join("analysis.tdf");
-        let meta_converters = MetadataReader::new(&sql_path)?;
-
-        let st = Instant::now();
-        let all_frames = file_reader.get_all().into_iter().flatten().collect();
-        let read_elap = st.elapsed();
-        info!("Reading all frames took {:#?}", read_elap);
-        let st = Instant::now();
-        let centroided_split_frames = expand_and_arrange_frames(all_frames);
-        let centroided_elap = st.elapsed();
-        info!("Splitting took {:#?}", centroided_elap);
-
-        let mut out_ms2_frames = HashMap::new();
-        let mut out_ms1_frames: Option<ExpandedSliceBundle> = None;
-
-        let mut flat_quad_settings = Vec::new();
-        centroided_split_frames
-            .into_iter()
-            .for_each(|(q, frameslices)| match q {
-                None => {
-                    out_ms1_frames = Some(ExpandedSliceBundle::new(frameslices));
-                }
-                Some(q) => {
-                    flat_quad_settings.push(q);
-                    out_ms2_frames.insert(q.index, ExpandedSliceBundle::new(frameslices));
-                }
-            });
-
-        let adapter = FragmentIndexAdapter::from(meta_converters.clone());
-
-        let out = Self {
-            bundled_ms1_frames: out_ms1_frames.expect("At least one ms1 frame should be present"),
-            bundled_frames: out_ms2_frames,
-            flat_quad_settings,
-            rt_converter: meta_converters.rt_converter,
-            mz_converter: meta_converters.mz_converter,
-            im_converter: meta_converters.im_converter,
-            adapter,
-        };
-
-        Ok(out)
+    pub fn from_path(path: &str) -> Result<Self, DataReadingError> {
+        Self::from_path_base(path, FrameProcessingConfig::NotCentroided)
     }
 }
 
 impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
-    IndexedData<FragmentGroupIndexQuery<FH>, (RawPeak, FH)> for ExpandedRawFrameIndex
+    QueriableData<FragmentGroupIndexQuery<FH>, (RawPeak, FH)> for ExpandedRawFrameIndex
 {
     fn query(&self, fragment_query: &FragmentGroupIndexQuery<FH>) -> Vec<(RawPeak, FH)> {
         todo!();
@@ -250,7 +206,7 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
         //     .collect()
     }
 
-    fn add_query<O, AG: crate::Aggregator<(RawPeak, FH), Output = O>>(
+    fn add_query<O, AG: crate::Aggregator<Item = (RawPeak, FH), Output = O>>(
         &self,
         fragment_query: &FragmentGroupIndexQuery<FH>,
         aggregator: &mut AG,
@@ -279,7 +235,7 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
         //     })
     }
 
-    fn add_query_multi_group<O, AG: crate::Aggregator<(RawPeak, FH), Output = O>>(
+    fn add_query_multi_group<O, AG: crate::Aggregator<Item = (RawPeak, FH), Output = O>>(
         &self,
         fragment_queries: &[FragmentGroupIndexQuery<FH>],
         aggregator: &mut [AG],
@@ -318,7 +274,7 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
 }
 
 impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
-    IndexedData<FragmentGroupIndexQuery<FH>, RawPeak> for ExpandedRawFrameIndex
+    QueriableData<FragmentGroupIndexQuery<FH>, RawPeak> for ExpandedRawFrameIndex
 {
     fn query(&self, fragment_query: &FragmentGroupIndexQuery<FH>) -> Vec<RawPeak> {
         todo!();
@@ -349,7 +305,7 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
         //     .collect()
     }
 
-    fn add_query<O, AG: crate::Aggregator<RawPeak, Output = O>>(
+    fn add_query<O, AG: crate::Aggregator<Item = RawPeak, Output = O>>(
         &self,
         fragment_query: &FragmentGroupIndexQuery<FH>,
         aggregator: &mut AG,
@@ -378,7 +334,7 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
         //     })
     }
 
-    fn add_query_multi_group<O, AG: crate::Aggregator<RawPeak, Output = O>>(
+    fn add_query_multi_group<O, AG: crate::Aggregator<Item = RawPeak, Output = O>>(
         &self,
         fragment_queries: &[FragmentGroupIndexQuery<FH>],
         aggregator: &mut [AG],

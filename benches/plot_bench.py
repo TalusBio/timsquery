@@ -16,8 +16,12 @@ parser = argparse.ArgumentParser()
 parser.add_argument("benchmark_file")
 args = parser.parse_args()
 
+bench_file_path = Path(args.benchmark_file)
+target_dir = bench_file_path.parent
+file_stem = bench_file_path.stem
+
 data = (
-    pl.read_json(args.benchmark_file)
+    pl.read_json(str(bench_file_path))
     .explode("results")
     .with_columns(
         bench=pl.col("results").struct.field("name"),
@@ -39,7 +43,7 @@ for context, sdf in data.group_by("context"):
         y=alt.Y("time_seconds", scale=alt.Scale(type="log")),
         color="bench",
     ).properties(
-        width=600,
-        height=600,
+        width=480,
+        height=360,
         title=f"{context}",
-    ).save(f"{context}.png")
+    ).save(target_dir / f"{file_stem}_{context}.png")

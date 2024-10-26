@@ -14,7 +14,8 @@ impl RawPeakIntensityAggregator {
     }
 }
 
-impl Aggregator<RawPeak> for RawPeakIntensityAggregator {
+impl Aggregator for RawPeakIntensityAggregator {
+    type Item = RawPeak;
     type Output = u64;
 
     fn add(&mut self, peak: &RawPeak) {
@@ -60,7 +61,8 @@ pub struct RawPeakVectorArrays {
     pub retention_times: Vec<f32>,
 }
 
-impl Aggregator<RawPeak> for RawPeakVectorAggregator {
+impl Aggregator for RawPeakVectorAggregator {
+    type Item = RawPeak;
     type Output = RawPeakVectorArrays;
 
     fn add(&mut self, peak: &RawPeak) {

@@ -3,7 +3,14 @@ use timsrust::converters::{ConvertableDomain, Scan2ImConverter, Tof2MzConverter}
 use std::ops::RangeInclusive;
 
 pub fn ppm_tol_range(elem: f64, tol_ppm: f64) -> RangeInclusive<f64> {
-    let utol = tol_ppm / 1e6;
+    let utol = elem * (tol_ppm / 1e6);
+    let left_e = elem - utol;
+    let right_e = elem + utol;
+    left_e..=right_e
+}
+
+pub fn pct_tol_range(elem: f64, tol_pct: f64) -> RangeInclusive<f64> {
+    let utol = elem * (tol_pct / 100.0);
     let left_e = elem - utol;
     let right_e = elem + utol;
     left_e..=right_e
@@ -24,7 +31,7 @@ pub fn scan_tol_range(
     converter: &Scan2ImConverter,
 ) -> RangeInclusive<usize> {
     let im = converter.convert(scan as f64);
-    let im_range = ppm_tol_range(im, tol_pct);
+    let im_range = pct_tol_range(im, tol_pct);
     let scan_min = converter.invert(*im_range.start()).round() as usize;
     let scan_max = converter.invert(*im_range.end()).round() as usize;
     // Note I need to do this here bc the conversion between scan numbers and ion

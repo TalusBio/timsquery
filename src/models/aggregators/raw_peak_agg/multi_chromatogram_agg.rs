@@ -342,9 +342,8 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> From<MultiCMGStatsArrays<F
     }
 }
 
-impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> Aggregator<(RawPeak, FH)>
-    for MultiCMGStats<FH>
-{
+impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> Aggregator for MultiCMGStats<FH> {
+    type Item = (RawPeak, FH);
     type Output = NaturalFinalizedMultiCMGStatsArrays<FH>;
 
     fn add(&mut self, peak: &(RawPeak, FH)) {

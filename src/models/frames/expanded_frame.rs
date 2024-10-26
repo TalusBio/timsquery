@@ -2,7 +2,6 @@ use super::single_quad_settings::{
     expand_quad_settings, ExpandedFrameQuadSettings, SingleQuadrupoleSetting,
 };
 use itertools::Itertools;
-use rayon::iter::IntoParallelIterator;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::marker::PhantomData;
@@ -15,10 +14,14 @@ use super::peak_in_quad::PeakInQuad;
 use crate::sort_by_indices_multi;
 use crate::sort_vecs_by_first;
 use crate::utils::compress_explode::explode_vec;
-use crate::utils::frame_processing::lazy_centroid_weighted_frame;
+use crate::utils::frame_processing::{lazy_centroid_weighted_frame, PeakArrayRefs};
 use crate::utils::sorting::argsort_by;
 use crate::utils::tolerance_ranges::{scan_tol_range, tof_tol_range};
-use log::{debug, info, trace};
+use log::{info, trace, warn};
+use timsrust::{
+    readers::{FrameReader, FrameReaderError, MetadataReaderError},
+    TimsRustError,
+};
 
 /// A frame after expanding the mobility data and re-sorting it by tof.
 #[derive(Debug, Clone)]
@@ -86,7 +89,7 @@ fn sort_by_tof_macro(
 }
 
 impl<T: SortingStateTrait> ExpandedFrameSlice<T> {
-    pub fn sort_by_tof(mut self) -> ExpandedFrameSlice<SortedState> {
+    pub fn sort_by_tof(self) -> ExpandedFrameSlice<SortedState> {
         // let mut indices = argsort_by(&self.tof_indices, |x| *x);
         // sort_by_indices_multi!(
         //     &mut indices,
@@ -295,39 +298,239 @@ impl ExpandedFrame {
     }
 }
 
-pub fn expand_and_arrange_frames(
-    frames: Vec<Frame>,
+pub fn par_expand_and_arrange_frames(
+    frame_iter: impl ParallelIterator<Item = Frame>,
 ) -> HashMap<Option<SingleQuadrupoleSetting>, Vec<ExpandedFrameSlice<SortedState>>> {
-    info!("Expanding and arranging frames");
     let start = Instant::now();
-    let mut out = HashMap::new();
-    let split: Vec<ExpandedFrameSlice<SortedState>> = frames
-        .into_par_iter()
-        .flat_map(|frame| expand_and_split_frame(frame))
-        .collect();
-    for es in split {
-        out.entry(es.quadrupole_settings)
-            .or_insert(Vec::new())
-            .push(es);
-    }
+    let split = frame_iter.flat_map(|frame| expand_and_split_frame(frame));
+    // let mut out = HashMap::new();
+    // for es in split {
+    //     out.entry(es.quadrupole_settings)
+    //         .or_insert(Vec::new())
+    //         .push(es);
+    // }
+    //
+    // Attempted implementation so the folding occurs in parrallel.
+    // Inspired by/Copied from: https://stackoverflow.com/a/70097253/4295016
+    let mut out = split
+        .fold(HashMap::new, |mut acc, x| {
+            acc.entry(x.quadrupole_settings)
+                .or_insert(Vec::new())
+                .push(x);
+            acc
+        })
+        .reduce_with(|mut acc1, acc2| {
+            for (qs, frameslices) in acc2.into_iter() {
+                acc1.entry(qs).or_insert(Vec::new()).extend(frameslices);
+            }
+            acc1
+        })
+        .expect("At least one frame is iterated over");
 
     // Finally sort each of them internally by retention time.
     for (_, es) in out.iter_mut() {
-        es.sort_unstable_by(|a, b| a.rt.partial_cmp(&b.rt).unwrap());
+        es.par_sort_unstable_by(|a, b| a.rt.partial_cmp(&b.rt).unwrap());
     }
     let end = start.elapsed();
     info!("Expanding and arranging frames took {:#?}", end);
     out
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FrameProcessingConfig {
+    Centroided {
+        ims_tol_pct: f64,
+        mz_tol_ppm: f64,
+        window_width: usize,
+        max_ms1_peaks: usize,
+        max_ms2_peaks: usize,
+        ims_converter: Option<Scan2ImConverter>,
+        mz_converter: Option<Tof2MzConverter>,
+    },
+    NotCentroided,
+}
+
+impl FrameProcessingConfig {
+    pub fn with_converters(
+        self,
+        ims_converter: Scan2ImConverter,
+        mz_converter: Tof2MzConverter,
+    ) -> Self {
+        match self {
+            FrameProcessingConfig::Centroided {
+                ims_tol_pct,
+                mz_tol_ppm,
+                window_width,
+                max_ms1_peaks,
+                max_ms2_peaks,
+                ..
+            } => FrameProcessingConfig::Centroided {
+                ims_tol_pct,
+                mz_tol_ppm,
+                window_width,
+                max_ms1_peaks,
+                max_ms2_peaks,
+                ims_converter: Some(ims_converter),
+                mz_converter: Some(mz_converter),
+            },
+            FrameProcessingConfig::NotCentroided => FrameProcessingConfig::NotCentroided,
+        }
+    }
+
+    pub fn default_centroided() -> Self {
+        FrameProcessingConfig::Centroided {
+            ims_tol_pct: 1.5,
+            mz_tol_ppm: 15.0,
+            window_width: 3,
+            max_ms1_peaks: 100_000,
+            max_ms2_peaks: 10_000,
+            ims_converter: Default::default(),
+            mz_converter: Default::default(),
+        }
+    }
+
+    pub fn default_not_centroided() -> Self {
+        FrameProcessingConfig::NotCentroided
+    }
+}
+
+#[derive(Debug)]
+pub enum DataReadingError {
+    CentroidingError(FrameProcessingConfig),
+    UnsupportedDataError(String),
+    TimsRustError(TimsRustError), // Why doesnt timsrust error derive clone?
+}
+
+impl From<TimsRustError> for DataReadingError {
+    fn from(e: TimsRustError) -> Self {
+        DataReadingError::TimsRustError(e)
+    }
+}
+
+impl From<MetadataReaderError> for DataReadingError {
+    fn from(e: MetadataReaderError) -> Self {
+        DataReadingError::TimsRustError(TimsRustError::MetadataReaderError(e))
+    }
+}
+
+impl From<FrameReaderError> for DataReadingError {
+    fn from(e: FrameReaderError) -> Self {
+        DataReadingError::TimsRustError(TimsRustError::FrameReaderError(e))
+    }
+}
+
+fn warn_and_skip_badframes(
+    frame_iter: impl ParallelIterator<Item = Result<Frame, FrameReaderError>>,
+) -> impl ParallelIterator<Item = Frame> {
+    frame_iter.filter_map(|x| {
+        // Log the info of the frame that broke ...
+        match x {
+            Ok(frame) => Some(frame),
+            Err(e) => {
+                warn!("Failed to read frame {:?}", e);
+                None
+            }
+        }
+    })
+}
+
+pub fn par_read_and_expand_frames(
+    frame_reader: &FrameReader,
+    centroiding_config: FrameProcessingConfig,
+) -> Result<
+    HashMap<Option<SingleQuadrupoleSetting>, Vec<ExpandedFrameSlice<SortedState>>>,
+    DataReadingError,
+> {
+    let dia_windows = match frame_reader.get_dia_windows() {
+        Some(dia_windows) => dia_windows,
+        None => {
+            return Err(DataReadingError::UnsupportedDataError(
+                "No dia windows found".to_string(),
+            ))
+        }
+    };
+
+    let mut all_expanded_frames = HashMap::new();
+    for dia_window in dia_windows.into_iter() {
+        info!("Processing dia window: {:?}", dia_window);
+        let curr_iter = frame_reader.parallel_filter(|x| x.quadrupole_settings == dia_window);
+        let curr_iter = warn_and_skip_badframes(curr_iter);
+
+        let expanded_frames = match centroiding_config {
+            FrameProcessingConfig::Centroided {
+                ims_tol_pct,
+                mz_tol_ppm,
+                window_width,
+                max_ms1_peaks: _max_ms1_peaks,
+                max_ms2_peaks,
+                ims_converter,
+                mz_converter,
+            } => {
+                let expanded_frames = par_expand_and_centroid_frames(
+                    curr_iter,
+                    ims_tol_pct,
+                    mz_tol_ppm,
+                    window_width,
+                    max_ms2_peaks,
+                    &ims_converter.unwrap(),
+                    &mz_converter.unwrap(),
+                );
+                expanded_frames
+            }
+            FrameProcessingConfig::NotCentroided => {
+                let expanded_frames = par_expand_and_arrange_frames(curr_iter);
+                expanded_frames
+            }
+        };
+
+        all_expanded_frames.extend(expanded_frames);
+    }
+
+    info!("Processing MS1 frames");
+    let ms1_iter = frame_reader.parallel_filter(|x| x.ms_level == MSLevel::MS1);
+    let ms1_iter = warn_and_skip_badframes(ms1_iter);
+    let expanded_ms1_frames = match centroiding_config {
+        FrameProcessingConfig::Centroided {
+            ims_tol_pct,
+            mz_tol_ppm,
+            window_width,
+            max_ms1_peaks,
+            max_ms2_peaks: _max_ms2_peaks,
+            ims_converter,
+            mz_converter,
+        } => {
+            let expanded_frames = par_expand_and_centroid_frames(
+                ms1_iter,
+                ims_tol_pct,
+                mz_tol_ppm,
+                window_width,
+                max_ms1_peaks,
+                &ims_converter.unwrap(),
+                &mz_converter.unwrap(),
+            );
+            expanded_frames
+        }
+        FrameProcessingConfig::NotCentroided => {
+            let expanded_frames = par_expand_and_arrange_frames(ms1_iter);
+            expanded_frames
+        }
+    };
+    all_expanded_frames.extend(expanded_ms1_frames);
+    info!("Done reading and expanding frames");
+
+    Ok(all_expanded_frames)
+}
+
 pub fn par_expand_and_centroid_frames(
-    frames: Vec<Frame>,
+    frames: impl ParallelIterator<Item = Frame>,
     ims_tol_pct: f64,
     mz_tol_ppm: f64,
+    window_width: usize,
+    max_peaks: usize,
     ims_converter: &Scan2ImConverter,
     mz_converter: &Tof2MzConverter,
 ) -> HashMap<Option<SingleQuadrupoleSetting>, Vec<ExpandedFrameSlice<SortedState>>> {
-    let split_frames = expand_and_arrange_frames(frames);
+    let split_frames = par_expand_and_arrange_frames(frames);
 
     let out: HashMap<Option<SingleQuadrupoleSetting>, Vec<ExpandedFrameSlice<SortedState>>> =
         split_frames
@@ -338,9 +541,10 @@ pub fn par_expand_and_centroid_frames(
                 let start_peaks: usize = frameslices.iter().map(|x| x.len()).sum();
                 let centroided = par_lazy_centroid_frameslices(
                     &frameslices,
-                    3,
+                    window_width,
                     ims_tol_pct,
                     mz_tol_ppm,
+                    max_peaks,
                     ims_converter,
                     mz_converter,
                 );
@@ -358,70 +562,34 @@ pub fn par_expand_and_centroid_frames(
     out
 }
 
-fn centroid_frameslice_window(
+fn centroid_frameslice_window2(
     frameslices: &[ExpandedFrameSlice<SortedState>],
     ims_tol_pct: f64,
     mz_tol_ppm: f64,
+    max_peaks: usize,
     ims_converter: &Scan2ImConverter,
     mz_converter: &Tof2MzConverter,
 ) -> ExpandedFrameSlice<SortedState> {
     assert!(frameslices.len() > 1, "Expected at least 2 frameslices");
     let reference_index = frameslices.len() / 2;
 
-    // this is A LOT of cloning ... look into whether it is needed.
-
-    let tof_array: Vec<u32> = frameslices
+    let peak_refs: Vec<PeakArrayRefs> = frameslices
         .iter()
-        .flat_map(|x| x.tof_indices.clone())
+        .map(|x| PeakArrayRefs::new(&x.tof_indices, &x.scan_numbers, &x.intensities))
         .collect();
 
-    let ims_array: Vec<usize> = frameslices
-        .iter()
-        .flat_map(|x| x.scan_numbers.clone())
-        .collect();
-    let weight_array: Vec<u32> = frameslices
-        .iter()
-        .flat_map(|x| x.intensities.clone())
-        .collect();
-    let intensity_array: Vec<u32> = frameslices
-        .iter()
-        .enumerate()
-        .flat_map(|(i, x)| {
-            if i == reference_index {
-                x.intensities.clone()
-            } else {
-                vec![0u32; x.tof_indices.len()]
-            }
-        })
-        .collect();
-
-    // let mut tof_order = argsort_by(&tof_array, |x| *x);
-    // sort_by_indices_multi!(
-    //     &mut tof_order,
-    //     &mut tof_array,
-    //     &mut ims_array,
-    //     &mut weight_array,
-    //     &mut intensity_array
-    // );
-    let (tof_array, ims_array, weight_array, intensity_array) =
-        sort_vecs_by_first!(tof_array, ims_array, weight_array, intensity_array);
-
-    let ((mzs, intensities), imss) = lazy_centroid_weighted_frame(
-        &tof_array,
-        &ims_array,
-        &weight_array,
-        &intensity_array,
-        |&tof| tof_tol_range(tof, mz_tol_ppm, mz_converter),
-        |&scan| scan_tol_range(scan, ims_tol_pct, ims_converter),
+    let ((tof_array, intensity_array), ims_array) = lazy_centroid_weighted_frame(
+        &peak_refs,
+        reference_index,
+        max_peaks,
+        |tof| tof_tol_range(tof, mz_tol_ppm, mz_converter),
+        |scan| scan_tol_range(scan, ims_tol_pct, ims_converter),
     );
 
-    // Make sure everything is sorted ...
-    assert!(mzs.windows(2).all(|x| x[0] <= x[1]));
-
     ExpandedFrameSlice {
-        tof_indices: mzs,
-        scan_numbers: imss,
-        intensities,
+        tof_indices: tof_array,
+        scan_numbers: ims_array,
+        intensities: intensity_array,
         frame_index: frameslices[reference_index].frame_index,
         rt: frameslices[reference_index].rt,
         acquisition_type: frameslices[reference_index].acquisition_type,
@@ -439,6 +607,7 @@ pub fn par_lazy_centroid_frameslices(
     window_width: usize,
     ims_tol_pct: f64,
     mz_tol_ppm: f64,
+    max_peaks: usize,
     ims_converter: &Scan2ImConverter,
     mz_converter: &Tof2MzConverter,
 ) -> Vec<ExpandedFrameSlice<SortedState>> {
@@ -454,7 +623,14 @@ pub fn par_lazy_centroid_frameslices(
     assert!(frameslices.len() > window_width);
 
     let local_lambda = |fss: &[ExpandedFrameSlice<SortedState>]| {
-        centroid_frameslice_window(fss, ims_tol_pct, mz_tol_ppm, ims_converter, mz_converter)
+        centroid_frameslice_window2(
+            fss,
+            ims_tol_pct,
+            mz_tol_ppm,
+            max_peaks,
+            ims_converter,
+            mz_converter,
+        )
     };
 
     frameslices
