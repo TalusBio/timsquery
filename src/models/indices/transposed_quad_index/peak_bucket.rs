@@ -1,7 +1,6 @@
-use crate::sort_by_indices_multi;
+use crate::sort_vecs_by_first;
 use crate::utils::compress_explode::compress_vec;
 use crate::utils::display::{glimpse_vec, GlimpseConfig};
-use crate::utils::sorting::argsort_by;
 use std::fmt::Display;
 
 pub struct PeakInBucket {
@@ -105,13 +104,12 @@ impl PeakBucketBuilder {
     }
 
     pub fn build(mut self) -> PeakBucket {
-        let mut indices = argsort_by(&self.scan_offsets, |x| *x);
-        sort_by_indices_multi!(
-            &mut indices,
-            &mut self.scan_offsets,
-            &mut self.retention_times,
-            &mut self.intensities
-        );
+        let sorted =
+            sort_vecs_by_first!(&self.scan_offsets, &self.retention_times, &self.intensities);
+        self.scan_offsets = sorted.0;
+        self.retention_times = sorted.1;
+        self.intensities = sorted.2;
+
         // TODO consider if I really need to compress this.
         // Options:
         // 1. Change the compression of scans (I use the default in timsrust but im sure we can do

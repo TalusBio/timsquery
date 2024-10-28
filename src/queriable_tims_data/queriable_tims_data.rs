@@ -1,9 +1,9 @@
-use log::info;
 use rayon::prelude::*;
 use serde::Serialize;
 use std::hash::Hash;
 use std::rc::Rc;
 use std::time::Instant;
+use tracing::info;
 
 use crate::{Aggregator, ElutionGroup, HasIntegerID, QueriableData, Tolerance, ToleranceAdapter};
 

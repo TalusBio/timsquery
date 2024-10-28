@@ -1,7 +1,6 @@
 use super::single_quad_settings::{
     expand_quad_settings, ExpandedFrameQuadSettings, SingleQuadrupoleSetting,
 };
-use itertools::Itertools;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::marker::PhantomData;
@@ -11,17 +10,16 @@ use timsrust::converters::{Scan2ImConverter, Tof2MzConverter};
 use timsrust::{AcquisitionType, Frame, MSLevel, QuadrupoleSettings};
 
 use super::peak_in_quad::PeakInQuad;
-use crate::sort_by_indices_multi;
 use crate::sort_vecs_by_first;
 use crate::utils::compress_explode::explode_vec;
 use crate::utils::frame_processing::{lazy_centroid_weighted_frame, PeakArrayRefs};
-use crate::utils::sorting::argsort_by;
 use crate::utils::tolerance_ranges::{scan_tol_range, tof_tol_range};
-use log::{info, trace, warn};
 use timsrust::{
     readers::{FrameReader, FrameReaderError, MetadataReaderError},
     TimsRustError,
 };
+use tracing::instrument;
+use tracing::{info, trace, warn};
 
 /// A frame after expanding the mobility data and re-sorting it by tof.
 #[derive(Debug, Clone)]
@@ -61,22 +59,6 @@ pub struct ExpandedFrameSlice<S: SortingStateTrait> {
     pub window_group: u8,
     pub window_subindex: u8,
     _sorting_state: PhantomData<S>,
-}
-
-fn sort_by_tof2(
-    tof_indices: Vec<u32>,
-    scan_numbers: Vec<usize>,
-    intensities: Vec<u32>,
-) -> ((Vec<u32>, Vec<usize>), Vec<u32>) {
-    let mut combined: Vec<((u32, usize), u32)> = tof_indices
-        .iter()
-        .zip(scan_numbers.iter())
-        .zip(intensities.iter())
-        .map(|((tof, scan), inten)| ((*tof, *scan), *inten))
-        .collect();
-    combined.sort_unstable_by(|a, b| a.0 .0.partial_cmp(&b.0 .0).unwrap());
-    let ((tof_indices, scan_numbers), intensities) = combined.into_iter().unzip();
-    ((tof_indices, scan_numbers), intensities)
 }
 
 // Example of how to use it with your specific types
@@ -141,23 +123,17 @@ impl ExpandedFrameSlice<SortedState> {
             peak_ind_start..peak_ind_end
         };
 
-        match scan_range {
-            Some((min_scan, max_scan)) => {
-                assert!(min_scan <= max_scan);
-            }
-            None => {}
-        };
+        if let Some((min_scan, max_scan)) = scan_range {
+            assert!(min_scan <= max_scan);
+        }
 
         for peak_ind in peak_range {
             let scan_index = self.scan_numbers[peak_ind];
-            match scan_range {
-                Some((min_scan, max_scan)) => {
-                    if scan_index < min_scan || scan_index > max_scan {
-                        continue;
-                    }
+            if let Some((min_scan, max_scan)) = scan_range {
+                if scan_index < min_scan || scan_index > max_scan {
+                    continue;
                 }
-                None => {}
-            };
+            }
 
             let intensity = self.intensities[peak_ind];
             let tof_index = self.tof_indices[peak_ind];
@@ -250,8 +226,6 @@ fn expand_fragmented_frame(
             window_subindex: i as u8,
             _sorting_state: PhantomData::<UnsortedState>,
         };
-        // Q: is this sorting twice? since sort before creating the expanded frame slices.
-        // TODO: Use the state type pattern to make sure only one sort happens.
         out.push(curr_slice.sort_by_tof());
     }
     out
@@ -271,17 +245,12 @@ pub fn expand_and_split_frame(frame: Frame) -> Vec<ExpandedFrameSlice<SortedStat
 
 impl ExpandedFrame {
     pub fn from_frame(frame: Frame) -> Self {
-        let mut tof_indices = frame.tof_indices;
-        let mut scan_numbers = explode_vec(&frame.scan_offsets);
-        let mut intensities = frame.intensities;
+        let scan_numbers = explode_vec(&frame.scan_offsets);
 
-        let mut indices = argsort_by(&tof_indices, |x| *x);
-        sort_by_indices_multi!(
-            &mut indices,
-            &mut tof_indices,
-            &mut scan_numbers,
-            &mut intensities
-        );
+        let sorted = sort_vecs_by_first!(frame.tof_indices, scan_numbers, frame.intensities);
+        let tof_indices = sorted.0;
+        let scan_numbers = sorted.1;
+        let intensities = sorted.2;
 
         ExpandedFrame {
             tof_indices,
@@ -298,30 +267,28 @@ impl ExpandedFrame {
     }
 }
 
+type QuadBundledFrameslices =
+    HashMap<Option<SingleQuadrupoleSetting>, Vec<ExpandedFrameSlice<SortedState>>>;
+
+#[instrument(skip(frame_iter))]
 pub fn par_expand_and_arrange_frames(
     frame_iter: impl ParallelIterator<Item = Frame>,
-) -> HashMap<Option<SingleQuadrupoleSetting>, Vec<ExpandedFrameSlice<SortedState>>> {
-    let start = Instant::now();
-    let split = frame_iter.flat_map(|frame| expand_and_split_frame(frame));
-    // let mut out = HashMap::new();
-    // for es in split {
-    //     out.entry(es.quadrupole_settings)
-    //         .or_insert(Vec::new())
-    //         .push(es);
-    // }
-    //
-    // Attempted implementation so the folding occurs in parrallel.
+) -> QuadBundledFrameslices {
+    let split = frame_iter.flat_map(expand_and_split_frame);
+
+    // Implementation so the folding occurs in parrallel.
     // Inspired by/Copied from: https://stackoverflow.com/a/70097253/4295016
-    let mut out = split
-        .fold(HashMap::new, |mut acc, x| {
-            acc.entry(x.quadrupole_settings)
-                .or_insert(Vec::new())
-                .push(x);
-            acc
-        })
+    let mut out: QuadBundledFrameslices = split
+        .fold(
+            HashMap::new,
+            |mut acc: QuadBundledFrameslices, x: ExpandedFrameSlice<SortedState>| {
+                acc.entry(x.quadrupole_settings).or_default().push(x);
+                acc
+            },
+        )
         .reduce_with(|mut acc1, acc2| {
             for (qs, frameslices) in acc2.into_iter() {
-                acc1.entry(qs).or_insert(Vec::new()).extend(frameslices);
+                acc1.entry(qs).or_default().extend(frameslices);
             }
             acc1
         })
@@ -331,8 +298,6 @@ pub fn par_expand_and_arrange_frames(
     for (_, es) in out.iter_mut() {
         es.par_sort_unstable_by(|a, b| a.rt.partial_cmp(&b.rt).unwrap());
     }
-    let end = start.elapsed();
-    info!("Expanding and arranging frames took {:#?}", end);
     out
 }
 
@@ -434,6 +399,13 @@ fn warn_and_skip_badframes(
     })
 }
 
+#[instrument(
+    skip(frame_reader),
+    fields(
+        num_frames = %frame_reader.len(),
+        path = frame_reader.get_path().to_str(),
+    )
+)]
 pub fn par_read_and_expand_frames(
     frame_reader: &FrameReader,
     centroiding_config: FrameProcessingConfig,
@@ -465,22 +437,16 @@ pub fn par_read_and_expand_frames(
                 max_ms2_peaks,
                 ims_converter,
                 mz_converter,
-            } => {
-                let expanded_frames = par_expand_and_centroid_frames(
-                    curr_iter,
-                    ims_tol_pct,
-                    mz_tol_ppm,
-                    window_width,
-                    max_ms2_peaks,
-                    &ims_converter.unwrap(),
-                    &mz_converter.unwrap(),
-                );
-                expanded_frames
-            }
-            FrameProcessingConfig::NotCentroided => {
-                let expanded_frames = par_expand_and_arrange_frames(curr_iter);
-                expanded_frames
-            }
+            } => par_expand_and_centroid_frames(
+                curr_iter,
+                ims_tol_pct,
+                mz_tol_ppm,
+                window_width,
+                max_ms2_peaks,
+                &ims_converter.unwrap(),
+                &mz_converter.unwrap(),
+            ),
+            FrameProcessingConfig::NotCentroided => par_expand_and_arrange_frames(curr_iter),
         };
 
         all_expanded_frames.extend(expanded_frames);
@@ -498,22 +464,16 @@ pub fn par_read_and_expand_frames(
             max_ms2_peaks: _max_ms2_peaks,
             ims_converter,
             mz_converter,
-        } => {
-            let expanded_frames = par_expand_and_centroid_frames(
-                ms1_iter,
-                ims_tol_pct,
-                mz_tol_ppm,
-                window_width,
-                max_ms1_peaks,
-                &ims_converter.unwrap(),
-                &mz_converter.unwrap(),
-            );
-            expanded_frames
-        }
-        FrameProcessingConfig::NotCentroided => {
-            let expanded_frames = par_expand_and_arrange_frames(ms1_iter);
-            expanded_frames
-        }
+        } => par_expand_and_centroid_frames(
+            ms1_iter,
+            ims_tol_pct,
+            mz_tol_ppm,
+            window_width,
+            max_ms1_peaks,
+            &ims_converter.unwrap(),
+            &mz_converter.unwrap(),
+        ),
+        FrameProcessingConfig::NotCentroided => par_expand_and_arrange_frames(ms1_iter),
     };
     all_expanded_frames.extend(expanded_ms1_frames);
     info!("Done reading and expanding frames");
@@ -521,6 +481,7 @@ pub fn par_read_and_expand_frames(
     Ok(all_expanded_frames)
 }
 
+#[instrument(skip(frames))]
 pub fn par_expand_and_centroid_frames(
     frames: impl ParallelIterator<Item = Frame>,
     ims_tol_pct: f64,
@@ -602,6 +563,7 @@ fn centroid_frameslice_window2(
     }
 }
 
+#[instrument(skip(frameslices))]
 pub fn par_lazy_centroid_frameslices(
     frameslices: &[ExpandedFrameSlice<SortedState>],
     window_width: usize,
@@ -613,9 +575,12 @@ pub fn par_lazy_centroid_frameslices(
 ) -> Vec<ExpandedFrameSlice<SortedState>> {
     assert!(
         frameslices
-            .iter()
-            .tuple_windows()
-            .map(|(a, b)| { a.rt < b.rt && a.quadrupole_settings == b.quadrupole_settings })
+            .windows(2)
+            .map(|window| {
+                let a = &window[0];
+                let b = &window[1];
+                a.rt < b.rt && a.quadrupole_settings == b.quadrupole_settings
+            })
             .all(|x| x),
         "All frames should be sorted by rt and have the same quad settings"
     );
@@ -635,7 +600,7 @@ pub fn par_lazy_centroid_frameslices(
 
     frameslices
         .par_windows(window_width)
-        .map(|window| local_lambda(window))
+        .map(local_lambda)
         .collect()
 }
 

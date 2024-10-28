@@ -12,7 +12,6 @@ use crate::models::frames::single_quad_settings::{
 use crate::models::queries::FragmentGroupIndexQuery;
 use crate::traits::indexed_data::QueriableData;
 use crate::ToleranceAdapter;
-use log::info;
 use rayon::prelude::*;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -20,8 +19,8 @@ use std::hash::Hash;
 use std::time::Instant;
 use timsrust::converters::{Frame2RtConverter, Scan2ImConverter, Tof2MzConverter};
 use timsrust::readers::{FrameReader, MetadataReader};
-
-type QuadSettingsIndex = usize;
+use tracing::info;
+use tracing::instrument;
 
 #[derive(Debug)]
 pub struct ExpandedRawFrameIndex {
@@ -111,11 +110,18 @@ impl ExpandedRawFrameIndex {
         }
     }
 
+    #[instrument(name = "ExpandedRawFrameIndex::from_path_centroided")]
     pub fn from_path_centroided(path: &str) -> Result<Self, DataReadingError> {
         let config = FrameProcessingConfig::default_centroided();
         Self::from_path_base(path, config)
     }
 
+    #[instrument(name = "ExpandedRawFrameIndex::from_path")]
+    pub fn from_path(path: &str) -> Result<Self, DataReadingError> {
+        Self::from_path_base(path, FrameProcessingConfig::NotCentroided)
+    }
+
+    #[instrument(name = "ExpandedRawFrameIndex::from_path_base")]
     pub fn from_path_base(
         path: &str,
         centroid_config: FrameProcessingConfig,
@@ -128,10 +134,8 @@ impl ExpandedRawFrameIndex {
 
         let sql_path = std::path::Path::new(path).join("analysis.tdf");
         let meta_converters = MetadataReader::new(&sql_path)?;
-        let centroid_config = centroid_config.with_converters(
-            meta_converters.im_converter.clone(),
-            meta_converters.mz_converter.clone(),
-        );
+        let centroid_config = centroid_config
+            .with_converters(meta_converters.im_converter, meta_converters.mz_converter);
 
         let st = Instant::now();
         let centroided_split_frames = par_read_and_expand_frames(&file_reader, centroid_config)?;
@@ -167,10 +171,6 @@ impl ExpandedRawFrameIndex {
         };
 
         Ok(out)
-    }
-
-    pub fn from_path(path: &str) -> Result<Self, DataReadingError> {
-        Self::from_path_base(path, FrameProcessingConfig::NotCentroided)
     }
 }
 

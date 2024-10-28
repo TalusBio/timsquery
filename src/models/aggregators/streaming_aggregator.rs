@@ -1,4 +1,4 @@
-use log::debug;
+use tracing::debug;
 
 // Generic streaming aggregator that takes a pair of unsigned ints one with a value
 // and another with a weight and in a streaming fashion adds the value to the accumulator

@@ -1,82 +1,7 @@
 use crate::sort_vecs_by_first;
-use log::{info, warn};
 use std::cmp::Ordering;
 use std::ops::RangeInclusive;
-
-pub fn squash_frame(
-    mz_array: &[f32],
-    intensity_array: &[f32],
-    tol_ppm: f32,
-) -> (Vec<f32>, Vec<f32>) {
-    // Make sure the mz array is sorted
-    assert!(mz_array.windows(2).all(|x| x[0] <= x[1]));
-
-    let arr_len = mz_array.len();
-    let mut touched = vec![false; arr_len];
-    let mut global_num_touched = 0;
-
-    let mut order: Vec<usize> = (0..arr_len).collect();
-    order.sort_unstable_by(|&a, &b| {
-        intensity_array[b]
-            .partial_cmp(&intensity_array[a])
-            .unwrap_or(Ordering::Equal)
-    });
-
-    let mut agg_mz = vec![0.0; arr_len];
-    let mut agg_intensity = vec![0.0; arr_len];
-
-    let utol = tol_ppm / 1e6;
-
-    for &idx in &order {
-        if touched[idx] {
-            continue;
-        }
-
-        let mz = mz_array[idx];
-        let da_tol = mz * utol;
-        let left_e = mz - da_tol;
-        let right_e = mz + da_tol;
-
-        let ss_start = mz_array.partition_point(|&x| x < left_e);
-        let ss_end = mz_array.partition_point(|&x| x <= right_e);
-
-        let mut curr_intensity = 0.0;
-        let mut curr_weighted_mz = 0.0;
-
-        for i in ss_start..ss_end {
-            if !touched[i] && intensity_array[i] > 0.0 {
-                curr_intensity += intensity_array[i];
-                curr_weighted_mz += mz_array[i] * intensity_array[i];
-                touched[i] = true;
-                global_num_touched += 1;
-            }
-        }
-
-        if curr_intensity > 0.0 {
-            curr_weighted_mz /= curr_intensity;
-
-            agg_intensity[idx] = curr_intensity;
-            agg_mz[idx] = curr_weighted_mz;
-
-            touched[ss_start..ss_end].iter_mut().for_each(|x| *x = true);
-        }
-
-        if global_num_touched == arr_len {
-            break;
-        }
-    }
-
-    // Drop the zeros and sort
-    let mut result: Vec<(f32, f32)> = agg_mz
-        .into_iter()
-        .zip(agg_intensity.into_iter())
-        .filter(|&(mz, intensity)| mz > 0.0 && intensity > 0.0)
-        .collect();
-
-    result.sort_unstable_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
-
-    result.into_iter().unzip()
-}
+use tracing::{error, info, warn};
 
 pub type TofIntensityVecs = (Vec<u32>, Vec<u32>);
 pub type CentroidedVecs = (TofIntensityVecs, Vec<usize>);
@@ -165,13 +90,15 @@ pub fn lazy_centroid_weighted_frame<'a>(
     let num_arrays = peak_refs.len();
     assert!(num_arrays > 1);
     let arr_len = ref_arrays.len();
+    if arr_len == 0 {
+        error!("No peaks in reference array when centroiding");
+        return ((Vec::new(), Vec::new()), Vec::new());
+    }
     let initial_tot_intensity = ref_arrays
         .intensity_array
         .iter()
         .map(|x| *x as u64)
         .sum::<u64>();
-
-    const MIN_WEIGHT_PRESERVE: u64 = 50;
 
     let mut touched = vec![false; tot_size];
     let mut global_num_touched = 0;
@@ -252,7 +179,7 @@ pub fn lazy_centroid_weighted_frame<'a>(
             local_offset_touched += local_peak_refs.len();
         }
 
-        if curr_intensity > this_intensity {
+        if curr_weight > this_intensity {
             agg_intensity.push(u32::try_from(curr_intensity).expect("Expected to fit in u32"));
             let calc_tof = (curr_agg_tof / curr_weight) as u32;
             let calc_ims = (curr_agg_ims / curr_weight) as usize;
@@ -304,4 +231,209 @@ pub fn lazy_centroid_weighted_frame<'a>(
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Helper function to create a simple tolerance range for testing
+    fn test_tof_tolerance(tof: u32) -> RangeInclusive<u32> {
+        let tolerance = 2;
+        (tof.saturating_sub(tolerance))..=tof.saturating_add(tolerance)
+    }
+
+    fn test_ims_tolerance(ims: usize) -> RangeInclusive<usize> {
+        let tolerance = 1;
+        (ims.saturating_sub(tolerance))..=ims.saturating_add(tolerance)
+    }
+
+    // Helper function to create PeakArrayRefs
+    fn create_peak_refs<'a>(
+        tof: &'a [u32],
+        ims: &'a [usize],
+        intensity: &'a [u32],
+    ) -> PeakArrayRefs<'a> {
+        PeakArrayRefs::new(tof, ims, intensity)
+    }
+
+    #[test]
+    fn test_basic_centroid() {
+        // Test case with two simple peaks that should be merged
+        let peak_refs = vec![
+            create_peak_refs(
+                &[100, 101, 200, 201],   // tof
+                &[1, 1, 2, 2],           // ims
+                &[1000, 2000, 500, 600], // intensity
+            ),
+            create_peak_refs(
+                &[101, 201], // tof
+                &[1, 2],     // ims
+                &[900, 600], // intensity
+            ),
+        ];
+
+        let result = lazy_centroid_weighted_frame(
+            &peak_refs,
+            0,  // reference_index
+            10, // max_peaks
+            test_tof_tolerance,
+            test_ims_tolerance,
+        );
+
+        let ((tof_array, intensity_array), ims_array) = result;
+
+        assert_eq!(
+            tof_array.len(),
+            2,
+            "Expected 2 centroids, got {:?}, {:?}, {:?}",
+            tof_array,
+            intensity_array,
+            ims_array
+        );
+        assert_eq!(intensity_array.len(), 2);
+        assert_eq!(ims_array.len(), 2);
+
+        // Check that the peaks were properly merged and weighted
+        assert!(tof_array[0] >= 100 && tof_array[0] <= 101);
+        assert_eq!(ims_array[0], 1);
+        assert!(intensity_array[0] == 3000); // Should be sum of intensities
+        assert!(intensity_array[1] == 1100); // Should be sum of intensities
+    }
+
+    #[test]
+    fn test_max_peaks_limit() {
+        // Test that the function respects the max_peaks parameter
+        let peak_refs = vec![
+            create_peak_refs(&[100, 200, 300], &[1, 2, 3], &[1000, 900, 800]),
+            create_peak_refs(&[101, 201, 301], &[1, 2, 3], &[950, 850, 750]),
+        ];
+
+        let result = lazy_centroid_weighted_frame(
+            &peak_refs,
+            0,
+            2, // max_peaks set to 2
+            test_tof_tolerance,
+            test_ims_tolerance,
+        );
+
+        let ((tof_array, _), _) = result;
+        assert_eq!(
+            tof_array.len(),
+            2,
+            "Should only return max_peaks number of peaks"
+        );
+    }
+
+    #[test]
+    fn test_empty_input() {
+        // Test handling of empty arrays
+        let peak_refs = vec![
+            create_peak_refs(&[], &[], &[]),
+            create_peak_refs(&[], &[], &[]),
+        ];
+
+        let result =
+            lazy_centroid_weighted_frame(&peak_refs, 0, 10, test_tof_tolerance, test_ims_tolerance);
+
+        let ((tof_array, intensity_array), ims_array) = result;
+        assert_eq!(tof_array.len(), 0);
+        assert_eq!(intensity_array.len(), 0);
+        assert_eq!(ims_array.len(), 0);
+    }
+
+    #[test]
+    fn test_intensity_weighted_centroid() {
+        // Test that centroids are properly weighted by intensity
+        let peak_refs = vec![
+            create_peak_refs(
+                &[100, 200],
+                &[1, 2],
+                &[1000, 100], // High intensity for first peak
+            ),
+            create_peak_refs(
+                &[102, 202],
+                &[1, 2],
+                &[100, 1000], // High intensity for second peak
+            ),
+        ];
+
+        let result =
+            lazy_centroid_weighted_frame(&peak_refs, 0, 10, test_tof_tolerance, test_ims_tolerance);
+
+        let ((tof_array, _), ims_array) = result;
+
+        // First centroid should be closer to 100 due to higher intensity
+        assert!(tof_array[0] - 100 < 102 - tof_array[0]);
+        assert_eq!(ims_array[0], 1);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_invalid_reference_index() {
+        let peak_refs = vec![
+            create_peak_refs(&[100], &[1], &[1000]),
+            create_peak_refs(&[101], &[1], &[900]),
+        ];
+
+        // This should panic due to invalid reference index
+        lazy_centroid_weighted_frame(
+            &peak_refs,
+            2, // Invalid index
+            10,
+            test_tof_tolerance,
+            test_ims_tolerance,
+        );
+    }
+
+    // Pretty decent test suggested by claude but im not sure if I really
+    // need to suuport it ... since scan indices are usually less than 2_000
+    // #[test]
+    // fn test_large_input_values() {
+    //     // Test handling of large values close to u32::MAX
+    //     let peak_refs = vec![
+    //         create_peak_refs(
+    //             &[u32::MAX - 10, u32::MAX - 5],
+    //             &[usize::MAX - 10, usize::MAX - 5],
+    //             &[1000, 900],
+    //         ),
+    //         create_peak_refs(
+    //             &[u32::MAX - 9, u32::MAX - 4],
+    //             &[usize::MAX - 9, usize::MAX - 4],
+    //             &[950, 850],
+    //         ),
+    //     ];
+
+    //     let result =
+    //         lazy_centroid_weighted_frame(&peak_refs, 0, 10, test_tof_tolerance, test_ims_tolerance);
+
+    //     let ((tof_array, _), _) = result;
+    //     assert!(!tof_array.is_empty(), "Should handle large values properly");
+    // }
+
+    #[test]
+    fn test_reference_frame_intensity() {
+        // Test that only reference frame intensities are summed
+        let peak_refs = vec![
+            create_peak_refs(
+                &[100],
+                &[1],
+                &[1000], // Reference frame
+            ),
+            create_peak_refs(
+                &[101],
+                &[1],
+                &[5000], // Non-reference frame with higher intensity
+            ),
+        ];
+
+        let result =
+            lazy_centroid_weighted_frame(&peak_refs, 0, 10, test_tof_tolerance, test_ims_tolerance);
+
+        let ((_, intensity_array), _) = result;
+        assert_eq!(
+            intensity_array[0], 1000,
+            "Should only use reference frame intensity"
+        );
+    }
 }

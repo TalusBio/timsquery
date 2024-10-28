@@ -1,7 +1,7 @@
 use timsrust::{Frame, QuadrupoleSettings};
 
 use super::raw_peak::RawPeak;
-use log::trace;
+use tracing::trace;
 
 pub fn scans_matching_quad(
     quad_settings: &QuadrupoleSettings,

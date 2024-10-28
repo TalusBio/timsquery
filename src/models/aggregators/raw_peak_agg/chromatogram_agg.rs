@@ -1,8 +1,7 @@
 use super::super::streaming_aggregator::RunningStatsCalculator;
 use crate::models::frames::raw_peak::RawPeak;
-use crate::sort_by_indices_multi;
+use crate::sort_vecs_by_first;
 use crate::traits::aggregator::Aggregator;
-use crate::utils::sorting::argsort_by;
 
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -150,9 +149,7 @@ impl ChromatomobilogramStatsArrays {
     }
 
     pub fn sort_by_rt(&mut self) {
-        let mut indices = argsort_by(&self.retention_time_miliseconds, |x| *x);
-        sort_by_indices_multi!(
-            &mut indices,
+        let x = sort_vecs_by_first!(
             &mut self.retention_time_miliseconds,
             &mut self.tof_index_means,
             &mut self.tof_index_sds,
@@ -160,6 +157,12 @@ impl ChromatomobilogramStatsArrays {
             &mut self.scan_index_sds,
             &mut self.intensities
         );
+        self.retention_time_miliseconds = x.0;
+        self.tof_index_means = x.1;
+        self.tof_index_sds = x.2;
+        self.scan_index_means = x.3;
+        self.scan_index_sds = x.4;
+        self.intensities = x.5;
     }
 }
 

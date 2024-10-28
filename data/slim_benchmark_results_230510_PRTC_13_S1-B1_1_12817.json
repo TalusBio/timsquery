@@ -1,0 +1,138 @@
+{
+  "settings": {
+    "num_elution_groups": 1000,
+    "num_iterations": 1
+  },
+  "results": [
+    {
+      "name": "RawFileIndex",
+      "context": "Encoding",
+      "mean_duration_seconds": 0.006061387115151513,
+      "mean_duration_human_readable": "6.061387ms",
+      "setup_time_seconds": 1.75e-6,
+      "setup_time_human_readable": "1.75µs",
+      "note": null
+    },
+    {
+      "name": "ExpandedRawFileIndexCentroided",
+      "context": "Encoding",
+      "mean_duration_seconds": 102.017141791,
+      "mean_duration_human_readable": "102.017141791s",
+      "setup_time_seconds": 9.58e-7,
+      "setup_time_human_readable": "958ns",
+      "note": null
+    },
+    {
+      "name": "ExpandedRawFileIndex",
+      "context": "Encoding",
+      "mean_duration_seconds": 7.339009041,
+      "mean_duration_human_readable": "7.339009041s",
+      "setup_time_seconds": 1.042e-6,
+      "setup_time_human_readable": "1.042µs",
+      "note": null
+    },
+    {
+      "name": "TransposedQuadIndex",
+      "context": "Encoding",
+      "mean_duration_seconds": 64.579125625,
+      "mean_duration_human_readable": "64.579125625s",
+      "setup_time_seconds": 1.167e-6,
+      "setup_time_human_readable": "1.167µs",
+      "note": null
+    },
+    {
+      "name": "TransposedQuadIndexCentroided",
+      "context": "Encoding",
+      "mean_duration_seconds": 105.091189208,
+      "mean_duration_human_readable": "105.091189208s",
+      "setup_time_seconds": 1.25e-6,
+      "setup_time_human_readable": "1.25µs",
+      "note": null
+    },
+    {
+      "name": "RawFileIndex",
+      "context": "BatchAccess_narrow_rt",
+      "mean_duration_seconds": 28.889043334,
+      "mean_duration_human_readable": "28.889043334s",
+      "setup_time_seconds": 0.077295959,
+      "setup_time_human_readable": "77.295959ms",
+      "note": "RawFileIndex::query_multi_group aggregated 71227 "
+    },
+    {
+      "name": "ExpandedRawFileIndex",
+      "context": "BatchAccess_narrow_rt",
+      "mean_duration_seconds": 0.0023722945118483407,
+      "mean_duration_human_readable": "2.372294ms",
+      "setup_time_seconds": 5.8142151250000005,
+      "setup_time_human_readable": "5.814215125s",
+      "note": "ExpandedRawFileIndex::query_multi_group aggregated 72731 "
+    },
+    {
+      "name": "ExpandedRawFileIndex",
+      "context": "BatchAccess_full_rt",
+      "mean_duration_seconds": 0.363698,
+      "mean_duration_human_readable": "363.698ms",
+      "setup_time_seconds": 5.680389416,
+      "setup_time_human_readable": "5.680389416s",
+      "note": "ExpandedRawFileIndex::query_multi_group aggregated 11194054 "
+    },
+    {
+      "name": "ExpandedRawFileIndexCentroided",
+      "context": "BatchAccess_narrow_rt",
+      "mean_duration_seconds": 0.0011996081642685855,
+      "mean_duration_human_readable": "1.199608ms",
+      "setup_time_seconds": 98.870238958,
+      "setup_time_human_readable": "98.870238958s",
+      "note": "ExpandedRawFileIndexCentroided::query_multi_group aggregated 21990 "
+    },
+    {
+      "name": "ExpandedRawFileIndexCentroided",
+      "context": "BatchAccess_full_rt",
+      "mean_duration_seconds": 0.07626683057142856,
+      "mean_duration_human_readable": "76.26683ms",
+      "setup_time_seconds": 114.076896875,
+      "setup_time_human_readable": "114.076896875s",
+      "note": "ExpandedRawFileIndexCentroided::query_multi_group aggregated 5012679 "
+    },
+    {
+      "name": "TransposedQuadIndex",
+      "context": "BatchAccess_narrow_rt",
+      "mean_duration_seconds": 0.005130067953846155,
+      "mean_duration_human_readable": "5.130067ms",
+      "setup_time_seconds": 72.976041375,
+      "setup_time_human_readable": "72.976041375s",
+      "note": "TransposedQuadIndex::query_multi_group aggregated 69045 "
+    },
+    {
+      "name": "TransposedQuadIndex",
+      "context": "BatchAccess_full_rt",
+      "mean_duration_seconds": 0.00552524769060773,
+      "mean_duration_human_readable": "5.525247ms",
+      "setup_time_seconds": 87.057384125,
+      "setup_time_human_readable": "87.057384125s",
+      "note": "TransposedQuadIndex::query_multi_group aggregated 9971215 "
+    },
+    {
+      "name": "TransposedQuadIndexCentroided",
+      "context": "BatchAccess_narrow_rt",
+      "mean_duration_seconds": 0.001565241712050078,
+      "mean_duration_human_readable": "1.565241ms",
+      "setup_time_seconds": 118.473094709,
+      "setup_time_human_readable": "118.473094709s",
+      "note": "TransposedQuadIndex::query_multi_group aggregated 17773 "
+    },
+    {
+      "name": "TransposedQuadIndexCentroided",
+      "context": "BatchAccess_full_rt",
+      "mean_duration_seconds": 0.003929947243137255,
+      "mean_duration_human_readable": "3.929947ms",
+      "setup_time_seconds": 124.951945458,
+      "setup_time_human_readable": "124.951945458s",
+      "note": "TransposedQuadIndex::query_multi_group aggregated 4425627 "
+    }
+  ],
+  "metadata": {
+    "basename": "230510_PRTC_13_S1-B1_1_12817"
+  },
+  "full_benchmark_time_seconds": 961.0857955
+}

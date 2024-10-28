@@ -7,7 +7,6 @@ use crate::traits::aggregator::Aggregator;
 use crate::traits::indexed_data::QueriableData;
 use crate::ElutionGroup;
 use crate::ToleranceAdapter;
-use log::trace;
 use rayon::iter::ParallelIterator;
 use serde::Serialize;
 use std::fmt::Debug;
@@ -16,6 +15,7 @@ use timsrust::converters::ConvertableDomain;
 use timsrust::readers::{FrameReader, FrameReaderError, MetadataReader};
 use timsrust::TimsRustError;
 use timsrust::{Frame, Metadata, QuadrupoleSettings};
+use tracing::trace;
 
 pub struct RawFileIndex {
     file_reader: FrameReader,
@@ -168,7 +168,7 @@ impl RawFileIndex {
             .map(|(k, v)| {
                 let mz_range = tol.mz_range(*v);
                 (
-                    k.clone(),
+                    *k,
                     (
                         self.meta_converters.mz_converter.invert(mz_range.0) as u32,
                         self.meta_converters.mz_converter.invert(mz_range.1) as u32,

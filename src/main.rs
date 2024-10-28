@@ -1,8 +1,11 @@
+use clap::{Parser, Subcommand};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Instant;
 use timsquery::models::elution_group::ElutionGroup;
 use timsquery::queriable_tims_data::queriable_tims_data::query_multi_group;
 use timsquery::traits::tolerance::DefaultTolerance;
+use timsquery::traits::tolerance::{MobilityTolerance, MzToleramce, QuadTolerance, RtTolerance};
 use timsquery::{
     models::aggregators::{
         ChromatomobilogramStats, ExtractedIonChromatomobilogram, MultiCMGStatsFactory,
@@ -11,14 +14,20 @@ use timsquery::{
     models::indices::raw_file_index::RawFileIndex,
     models::indices::transposed_quad_index::QuadSplittedTransposedIndex,
 };
-
-use timsquery::traits::tolerance::{MobilityTolerance, MzToleramce, QuadTolerance, RtTolerance};
-
-use clap::{Parser, Subcommand};
-use serde::{Deserialize, Serialize};
+use tracing::instrument;
+use tracing::subscriber::set_global_default;
+use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
+use tracing_subscriber::{fmt, prelude::*, registry::Registry, EnvFilter, Layer};
 
 fn main() {
-    env_logger::init();
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let formatting_layer = BunyanFormattingLayer::new("timsquery".into(), std::io::stdout);
+    let subscriber = Registry::default()
+        .with(env_filter)
+        .with(JsonStorageLayer)
+        .with(formatting_layer);
+
+    set_global_default(subscriber).expect("Setting default subscriber failed");
     let args = Args::parse();
 
     match args.command {
@@ -88,6 +97,7 @@ fn template_elution_groups(num: usize) -> Vec<ElutionGroup<usize>> {
     egs
 }
 
+#[instrument]
 fn main_query_index(args: QueryIndexArgs) {
     let args_clone = args.clone();
 

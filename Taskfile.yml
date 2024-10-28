@@ -36,10 +36,9 @@ tasks:
       - cargo clippy
 
   bench:
-    requires:
-      vars: [RUST_BACKTRACE, RUST_LOG, TIMS_DATA_FILE]
     cmds:
-      - cargo bench
+      - SKIP_SLOW=1 SKIP_BUILD=1 SKIP_HIGHMEM=1 RUST_BACKTRACE=full TIMS_DATA_FILE=./data/LFQ_timsTOFPro_diaPASEF_Condition_A_Sample_Alpha_02.d cargo run --release --features bench --bin benchmark_indices
+      - uv run benches/plot_bench.py data/benchmark_results_LFQ_timsTOFPro_diaPASEF_Condition_A_Sample_Alpha_02.json
 
   templates:
     sources:

@@ -14,7 +14,6 @@ use crate::models::queries::FragmentGroupIndexQuery;
 use crate::traits::indexed_data::QueriableData;
 use crate::utils::display::{glimpse_vec, GlimpseConfig};
 use crate::ToleranceAdapter;
-use log::{debug, info, trace};
 use rayon::prelude::*;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -27,6 +26,8 @@ use timsrust::readers::{FrameReader, MetadataReader};
 use timsrust::Frame;
 use timsrust::Metadata;
 use timsrust::TimsRustError;
+use tracing::instrument;
+use tracing::{debug, info, trace};
 
 // TODO break this module apart ... its getting too big for my taste
 // - JSP: 2024-11-19
@@ -137,6 +138,7 @@ impl Display for QuadSplittedTransposedIndex {
 }
 
 impl QuadSplittedTransposedIndex {
+    #[instrument(name = "QuadSplittedTransposedIndex::from_path")]
     pub fn from_path(path: &str) -> Result<Self, DataReadingError> {
         let st = Instant::now();
         info!("Building transposed quad index from path {}", path);
@@ -148,6 +150,7 @@ impl QuadSplittedTransposedIndex {
         Ok(out)
     }
 
+    #[instrument(name = "QuadSplittedTransposedIndex::from_path_centroided")]
     pub fn from_path_centroided(path: &str) -> Result<Self, DataReadingError> {
         let st = Instant::now();
         info!(
@@ -181,14 +184,6 @@ impl QuadSplittedTransposedIndexBuilder {
         Self::default()
     }
 
-    fn add_frame(&mut self, frame: Frame) {
-        let expanded_slices = expand_and_split_frame(frame);
-
-        for es in expanded_slices.into_iter() {
-            self.add_frame_slice(es);
-        }
-    }
-
     fn add_frame_slice<S: SortingStateTrait>(&mut self, frame_slice: ExpandedFrameSlice<S>) {
         // Add key if it doesnt exist ...
         self.indices
@@ -204,10 +199,12 @@ impl QuadSplittedTransposedIndexBuilder {
             .add_frame_slice(frame_slice);
     }
 
+    #[instrument(name = "QuadSplittedTransposedIndexBuilder::from_path")]
     fn from_path(path: &str) -> Result<Self, DataReadingError> {
         Self::from_path_base(path, FrameProcessingConfig::NotCentroided)
     }
 
+    #[instrument(name = "QuadSplittedTransposedIndexBuilder::from_path_centroided")]
     fn from_path_centroided(path: &str) -> Result<Self, DataReadingError> {
         let config = FrameProcessingConfig::default_centroided();
         Self::from_path_base(path, config)
@@ -216,6 +213,7 @@ impl QuadSplittedTransposedIndexBuilder {
     // TODO: I think i should split this into two functions, one that starts the builder
     // and one that adds the frameslices, maybe even have a config struct that dispatches
     // the right preprocessing steps.
+    #[instrument(name = "QuadSplittedTransposedIndexBuilder::from_path_base")]
     fn from_path_base(
         path: &str,
         centroid_config: FrameProcessingConfig,
@@ -238,13 +236,9 @@ impl QuadSplittedTransposedIndexBuilder {
         let centroid_config = centroid_config
             .with_converters(meta_converters.im_converter, meta_converters.mz_converter);
 
-        let st = Instant::now();
         let split_frames = par_read_and_expand_frames(&file_reader, centroid_config)?;
 
-        let centroided_elap = st.elapsed();
-        debug!("Reading + Centroiding took {:#?}", centroided_elap);
-
-        let st = Instant::now();
+        // TODO use the rayon contructor to fold
         let out2: Result<Vec<Self>, TimsRustError> = split_frames
             .into_par_iter()
             .map(|(q, frameslices)| {
@@ -261,12 +255,6 @@ impl QuadSplittedTransposedIndexBuilder {
             x
         });
         final_out.fold(out2);
-        let build_elap = st.elapsed();
-
-        info!(
-            "Reading all frames + centroiding took {:#?}, building took {:#?}",
-            centroided_elap, build_elap
-        );
 
         Ok(final_out)
     }
@@ -281,6 +269,7 @@ impl QuadSplittedTransposedIndexBuilder {
         self.added_peaks += other.added_peaks;
     }
 
+    #[instrument(skip(self))]
     pub fn build(self) -> QuadSplittedTransposedIndex {
         let mut indices = HashMap::new();
         let mut flat_quad_settings = Vec::new();

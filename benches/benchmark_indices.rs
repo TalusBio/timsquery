@@ -20,6 +20,10 @@ use timsquery::{
     },
     ElutionGroup,
 };
+use tracing::subscriber::set_global_default;
+use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
+use tracing_chrome::ChromeLayerBuilder;
+use tracing_subscriber::{fmt, prelude::*, registry::Registry, EnvFilter, Layer};
 
 const NUM_ELUTION_GROUPS: usize = 1000;
 const NUM_ITERATIONS: usize = 1;
@@ -250,7 +254,7 @@ impl EnvConfig {
     }
 }
 
-fn run_encoding_benchmark(raw_file_path: &PathBuf, env_config: EnvConfig) -> Vec<BenchmarkResult> {
+fn run_encoding_benchmark(raw_file_path: &Path, env_config: EnvConfig) -> Vec<BenchmarkResult> {
     let raw_file_path = raw_file_path.to_str().unwrap();
     let mut out = vec![];
     let rfi = env_config.with_benchmark(
@@ -347,7 +351,7 @@ fn run_batch_access_benchmark(raw_file_path: &Path, env_config: EnvConfig) -> Ve
             "RawFileIndex",
             &format!("BatchAccess_{}", tol_name),
             || RawFileIndex::from_path(raw_file_path).unwrap(),
-            |index, i| {
+            |index, _i| {
                 let tmp = query_multi_group(
                     index,
                     index,
@@ -369,7 +373,7 @@ fn run_batch_access_benchmark(raw_file_path: &Path, env_config: EnvConfig) -> Ve
             "ExpandedRawFileIndex",
             &format!("BatchAccess_{}", tol_name),
             || ExpandedRawFrameIndex::from_path(raw_file_path).unwrap(),
-            |index, i| {
+            |index, _i| {
                 let tmp = query_multi_group(
                     index,
                     index,
@@ -394,7 +398,7 @@ fn run_batch_access_benchmark(raw_file_path: &Path, env_config: EnvConfig) -> Ve
             "ExpandedRawFileIndexCentroided",
             &format!("BatchAccess_{}", tol_name),
             || ExpandedRawFrameIndex::from_path_centroided(raw_file_path).unwrap(),
-            |index, i| {
+            |index, _i| {
                 let tmp = query_multi_group(
                     index,
                     index,
@@ -419,7 +423,7 @@ fn run_batch_access_benchmark(raw_file_path: &Path, env_config: EnvConfig) -> Ve
             "TransposedQuadIndex",
             &format!("BatchAccess_{}", tol_name),
             || QuadSplittedTransposedIndex::from_path(raw_file_path).unwrap(),
-            |index, i| {
+            |index, _i| {
                 let tmp = query_multi_group(
                     index,
                     index,
@@ -441,7 +445,7 @@ fn run_batch_access_benchmark(raw_file_path: &Path, env_config: EnvConfig) -> Ve
             "TransposedQuadIndexCentroided",
             &format!("BatchAccess_{}", tol_name),
             || QuadSplittedTransposedIndex::from_path_centroided(raw_file_path).unwrap(),
-            |index, i| {
+            |index, _i| {
                 let tmp = query_multi_group(
                     index,
                     index,
@@ -468,7 +472,7 @@ fn write_results(
     let filepath = parent.join(format!("benchmark_results_{}.json", basename));
     let file = File::create(&filepath)?;
     serde_json::to_writer_pretty(file, &report)?;
-    let out = serde_json::to_string_pretty(&report)?;
+    let _out = serde_json::to_string_pretty(&report)?;
 
     for result in report.results.iter_mut() {
         result.iterations = None;
@@ -482,7 +486,17 @@ fn write_results(
 }
 
 fn main() {
-    env_logger::init();
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let formatting_layer = BunyanFormattingLayer::new("timsquery".into(), std::io::stdout);
+    let (chrome_layer, _guard) = ChromeLayerBuilder::new().build();
+
+    let subscriber = Registry::default()
+        .with(env_filter)
+        .with(chrome_layer)
+        .with(JsonStorageLayer)
+        .with(formatting_layer);
+
+    set_global_default(subscriber).expect("Setting default subscriber failed");
     let st = Instant::now();
 
     let env_config = EnvConfig::new();

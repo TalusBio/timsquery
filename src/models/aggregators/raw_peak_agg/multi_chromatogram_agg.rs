@@ -6,10 +6,10 @@ use crate::models::aggregators::streaming_aggregator::RunningStatsCalculator;
 use crate::models::frames::raw_peak::RawPeak;
 use crate::traits::aggregator::Aggregator;
 use crate::utils::math::{lnfact, lnfact_float};
-use log::{debug, warn};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashSet};
 use std::hash::Hash;
+use tracing::{debug, warn};
 
 use timsrust::converters::{ConvertableDomain, Scan2ImConverter, Tof2MzConverter};
 
@@ -414,7 +414,7 @@ mod tests {
     fn test_value_vs_baseline() {
         let vals = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
         let baseline_window_size = 3;
-        let baseline = rolling_median(&vals, baseline_window_size, f64::NAN);
+        let _baseline = rolling_median(&vals, baseline_window_size, f64::NAN);
         let out = calculate_value_vs_baseline(&vals, baseline_window_size);
         let expect_val = vec![f64::NAN, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, f64::NAN];
         let all_close = out

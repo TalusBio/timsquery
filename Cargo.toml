@@ -2,6 +2,7 @@
 name = "timsquery"
 version = "0.4.0"
 edition = "2021"
+license = "Apache-2.0"
 
 [dependencies]
 timsrust = "0.4.1"
@@ -13,18 +14,24 @@ serde = { version = "1.0.204", features = ["derive"] }
 serde_json = "1.0.122"
 rmp-serde = "1.3.0"
 
-itertools = "0.13.0"
+tracing = { version = "0.1.40", features = ["log"] }
+tracing-subscriber = { version = "0.3.18", features = [
+  "registry",
+  "env-filter",
+] }
+tracing-bunyan-formatter = "0.3.9"
 
-rand = "0.8.5"
-rand_chacha = "0.3.1"
 
-log = "0.4.22"
-env_logger = "0.11.5"
+# These are only used for benchmarks
+rand = { version = "0.8.5", optional = true }
+rand_chacha = { version = "0.3.1", optional = true }
+tracing-chrome = "0.7.2"
 
 
 [features]
 clap = ["dep:clap"]
 build-binary = ["clap"]
+bench = ["dep:rand", "dep:rand_chacha"]
 
 [[bin]]
 name = "timsquery"
@@ -33,6 +40,7 @@ required-features = ["build-binary"]
 [[bin]]
 name = "benchmark_indices"
 path = "benches/benchmark_indices.rs"
+required-features = ["bench"]
 
 [profile.release]
 opt-level = 3

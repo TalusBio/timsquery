@@ -3,15 +3,14 @@ use super::peak_bucket::{PeakBucket, PeakInBucket};
 use crate::models::frames::expanded_frame::{ExpandedFrameSlice, SortingStateTrait};
 use crate::models::frames::peak_in_quad::PeakInQuad;
 use crate::models::frames::single_quad_settings::SingleQuadrupoleSetting;
-use crate::sort_by_indices_multi;
+use crate::sort_vecs_by_first;
 use crate::utils::display::{glimpse_vec, GlimpseConfig};
-use crate::utils::sorting::par_argsort_by;
-use log::debug;
-use log::info;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
 use std::time::Instant;
 use timsrust::converters::{ConvertableDomain, Frame2RtConverter};
+use tracing::instrument;
+use tracing::{debug, info};
 
 #[derive(Debug)]
 pub struct TransposedQuadIndex {
@@ -200,13 +199,9 @@ impl TransposedQuadIndexBuilder {
         self.frame_rts.push(slice.rt);
     }
 
+    #[instrument(skip(self))]
     pub fn build(self) -> TransposedQuadIndex {
         // TODO: Refactor this function, its getting pretty large.
-        let st = Instant::now();
-        info!(
-            "TransposedQuadIndex::build start ... quad_settings = {:?}",
-            self.quad_settings
-        );
         let max_tof = *self
             .tof_slices
             .iter()
@@ -267,7 +262,6 @@ impl TransposedQuadIndexBuilder {
             .collect();
 
         let bbe = bb_st.elapsed();
-        let elapsed = st.elapsed();
         info!(
             "TransposedQuadIndex::add_frame_slice adding peaks took {:#?} for {} peaks",
             aps.elapsed(),
@@ -276,10 +270,6 @@ impl TransposedQuadIndexBuilder {
         info!(
             "TransposedQuadIndex::add_frame_slice building buckets took {:#?}",
             bbe
-        );
-        info!(
-            "TransposedQuadIndex::build quad_settings={:?} took {:#?}",
-            quad_settings, elapsed
         );
         TransposedQuadIndex {
             quad_settings,
@@ -369,10 +359,10 @@ impl TransposedQuadIndexBuilder {
             }
 
             let concat_st = Instant::now();
-            let mut int_slice = self.int_slices[start..end].concat();
-            let mut tof_slice = self.tof_slices[start..end].concat();
-            let mut scan_slice = self.scan_slices[start..end].concat();
-            let mut rt_slice: Vec<f32> = self.frame_rts[start..end]
+            let int_slice = self.int_slices[start..end].concat();
+            let tof_slice = self.tof_slices[start..end].concat();
+            let scan_slice = self.scan_slices[start..end].concat();
+            let rt_slice: Vec<f32> = self.frame_rts[start..end]
                 .iter()
                 .zip(self.tof_slices[start..end].iter())
                 .flat_map(|(rt, tofslice)| vec![*rt as f32; tofslice.len()])
@@ -381,18 +371,12 @@ impl TransposedQuadIndexBuilder {
             let concat_elapsed = concat_st.elapsed();
 
             let sorting_st = Instant::now();
-            // let mut indices = argsort_by(&tof_slice, |x| *x);
-            let mut indices = par_argsort_by(&tof_slice, |x| *x);
 
-            let argsort_elapsed = sorting_st.elapsed();
-
-            sort_by_indices_multi!(
-                &mut indices,
-                &mut tof_slice,
-                &mut scan_slice,
-                &mut int_slice,
-                &mut rt_slice
-            );
+            let out = sort_vecs_by_first!(tof_slice, scan_slice, int_slice, rt_slice);
+            let tof_slice = out.0;
+            let scan_slice = out.1;
+            let int_slice = out.2;
+            let rt_slice = out.3;
 
             let sorting_elapsed = sorting_st.elapsed();
 
@@ -453,8 +437,8 @@ impl TransposedQuadIndexBuilder {
 
             let insertion_elapsed = insertion_st.elapsed();
             info!(
-                "BatchedBuild: quad_settings={:?} start={:?} end={:?}/{} peaks {}/{} concat took {:#?} sorting took arg: {:#?} / {:#?} insertion took {:#?}",
-                self.quad_settings, start, end, num_slices, added_peaks, tot_peaks, concat_elapsed, argsort_elapsed, sorting_elapsed, insertion_elapsed,
+                "BatchedBuild: quad_settings={:?} start={:?} end={:?}/{} peaks {}/{} concat took {:#?} sorting took: {:#?} insertion took {:#?}",
+                self.quad_settings, start, end, num_slices, added_peaks, tot_peaks, concat_elapsed, sorting_elapsed, insertion_elapsed,
             );
             start = end;
             peaks_in_chunk = 0;
