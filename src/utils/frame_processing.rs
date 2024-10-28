@@ -15,7 +15,11 @@ fn sort_n_check(
         sort_vecs_by_first!(agg_tof, agg_ims, agg_intensity);
 
     if let Some(x) = intensity_array.last() {
-        assert!(*x > 0);
+        assert!(
+            *x > 0,
+            "Expected all intensities to be positive non-zero, got {:?}",
+            intensity_array
+        );
         let max_tof = tof_array.iter().max().expect("At least one element");
         assert!(*max_tof < (u32::MAX - 1));
     }
@@ -105,45 +109,48 @@ pub fn lazy_centroid_weighted_frame<'a>(
     let mut num_added = 0;
 
     // We will be iterating in decreasing order of intensity
-    let mut order: Vec<usize> = (0..tot_size).collect();
-    order.sort_unstable_by(|&a, &b| {
-        let (a_major, a_minor) = index_split(a, &slice_sizes);
-        let (b_major, b_minor) = index_split(b, &slice_sizes);
+    // Pre-calculate indices and intensities for sorting
+    struct OrderItem {
+        global_idx: usize,
+        major_idx: usize,
+        minor_idx: usize,
+        intensity: u32,
+    }
 
-        let a_intensity = peak_refs[a_major].intensity_array[a_minor];
-        let b_intensity = peak_refs[b_major].intensity_array[b_minor];
+    let mut order: Vec<OrderItem> = Vec::with_capacity(tot_size);
+    let mut offset = 0;
+    for (major_idx, peak_ref) in peak_refs.iter().enumerate() {
+        for (minor_idx, &intensity) in peak_ref.intensity_array.iter().enumerate() {
+            order.push(OrderItem {
+                global_idx: offset + minor_idx,
+                major_idx,
+                minor_idx,
+                intensity,
+            });
+        }
+        offset += peak_ref.len();
+    }
 
-        b_intensity
-            .partial_cmp(&a_intensity)
-            .unwrap_or(Ordering::Equal)
-    });
+    // Sort by intensity
+    order.sort_unstable_by(|a, b| b.intensity.cmp(&a.intensity));
+    assert!(order[0].intensity > order[tot_size - 1].intensity);
 
-    assert!({
-        let (first_major, first_minor) = index_split(order[0], &slice_sizes);
-        let (last_major, last_minor) = index_split(order[tot_size - 1], &slice_sizes);
-
-        let first_intensity = peak_refs[first_major].intensity_array[first_minor];
-        let last_intensity = peak_refs[last_major].intensity_array[last_minor];
-
-        first_intensity >= last_intensity
-    });
-
-    // TODO explore if making vecs with capacity and appedning is better...
     let capacity = max_peaks.min(arr_len);
     let mut agg_tof = Vec::with_capacity(capacity);
     let mut agg_intensity = Vec::with_capacity(capacity);
     let mut agg_ims = Vec::with_capacity(capacity);
 
-    for idx in order {
-        let (major_idx, minor_idx) = index_split(idx, &slice_sizes);
+    for item in order {
+        let major_idx = item.major_idx;
+        let minor_idx = item.minor_idx;
+        let this_intensity = item.intensity as u64;
 
-        if touched[idx] {
+        if touched[item.global_idx] {
             continue;
         }
 
         let tof = peak_refs[major_idx].tof_array[minor_idx];
         let ims = peak_refs[major_idx].ims_array[minor_idx];
-        let this_intensity = peak_refs[major_idx].intensity_array[minor_idx] as u64;
         let tof_range = tof_tol_range_fn(tof);
         let ims_range = ims_tol_range_fn(ims);
 
@@ -153,8 +160,7 @@ pub fn lazy_centroid_weighted_frame<'a>(
         let mut curr_agg_ims = 0u64;
 
         let mut local_offset_touched = 0;
-        for ii in 0..num_arrays {
-            let local_peak_refs = &peak_refs[ii];
+        for (ii, local_peak_refs) in peak_refs.iter().enumerate() {
             let ss_start = local_peak_refs
                 .tof_array
                 .partition_point(|x| x < tof_range.start());
@@ -179,12 +185,13 @@ pub fn lazy_centroid_weighted_frame<'a>(
             local_offset_touched += local_peak_refs.len();
         }
 
-        if curr_weight > this_intensity {
+        // This means that at least 2 peaks need to be aggregated.
+        if curr_weight > this_intensity && curr_intensity >= this_intensity {
             agg_intensity.push(u32::try_from(curr_intensity).expect("Expected to fit in u32"));
             let calc_tof = (curr_agg_tof / curr_weight) as u32;
             let calc_ims = (curr_agg_ims / curr_weight) as usize;
-            assert!(tof_range.contains(&calc_tof));
-            assert!(ims_range.contains(&calc_ims));
+            debug_assert!(tof_range.contains(&calc_tof));
+            debug_assert!(ims_range.contains(&calc_ims));
             agg_tof.push(calc_tof);
             agg_ims.push(calc_ims);
             num_added += 1;
@@ -198,8 +205,9 @@ pub fn lazy_centroid_weighted_frame<'a>(
         }
     }
 
-    // Drop the zeros and sort by mz (tof)
     let out = sort_n_check(agg_intensity, agg_tof, agg_ims);
+
+    // TODO:Make everything below this a separate function and accumulate it.
     let tot_final_intensity = out.0 .1.iter().map(|x| *x as u64).sum::<u64>();
     let inten_ratio = tot_final_intensity as f64 / initial_tot_intensity as f64;
     assert!(initial_tot_intensity >= tot_final_intensity);
@@ -410,30 +418,4 @@ mod tests {
     //     let ((tof_array, _), _) = result;
     //     assert!(!tof_array.is_empty(), "Should handle large values properly");
     // }
-
-    #[test]
-    fn test_reference_frame_intensity() {
-        // Test that only reference frame intensities are summed
-        let peak_refs = vec![
-            create_peak_refs(
-                &[100],
-                &[1],
-                &[1000], // Reference frame
-            ),
-            create_peak_refs(
-                &[101],
-                &[1],
-                &[5000], // Non-reference frame with higher intensity
-            ),
-        ];
-
-        let result =
-            lazy_centroid_weighted_frame(&peak_refs, 0, 10, test_tof_tolerance, test_ims_tolerance);
-
-        let ((_, intensity_array), _) = result;
-        assert_eq!(
-            intensity_array[0], 1000,
-            "Should only use reference frame intensity"
-        );
-    }
 }

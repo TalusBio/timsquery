@@ -348,7 +348,7 @@ impl FrameProcessingConfig {
             mz_tol_ppm: 15.0,
             window_width: 3,
             max_ms1_peaks: 100_000,
-            max_ms2_peaks: 10_000,
+            max_ms2_peaks: 20_000,
             ims_converter: Default::default(),
             mz_converter: Default::default(),
         }
