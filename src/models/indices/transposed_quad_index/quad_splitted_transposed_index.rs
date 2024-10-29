@@ -2,8 +2,8 @@ use super::quad_index::{FrameRTTolerance, TransposedQuadIndex, TransposedQuadInd
 use crate::models::adapters::FragmentIndexAdapter;
 use crate::models::elution_group::ElutionGroup;
 use crate::models::frames::expanded_frame::{
-    expand_and_split_frame, par_read_and_expand_frames, DataReadingError, ExpandedFrameSlice,
-    FrameProcessingConfig, SortingStateTrait,
+    par_read_and_expand_frames, DataReadingError, ExpandedFrameSlice, FrameProcessingConfig,
+    SortingStateTrait,
 };
 use crate::models::frames::peak_in_quad::PeakInQuad;
 use crate::models::frames::raw_peak::RawPeak;
@@ -11,7 +11,7 @@ use crate::models::frames::single_quad_settings::{
     get_matching_quad_settings, SingleQuadrupoleSetting, SingleQuadrupoleSettingIndex,
 };
 use crate::models::queries::FragmentGroupIndexQuery;
-use crate::traits::indexed_data::QueriableData;
+use crate::traits::queriable_data::QueriableData;
 use crate::utils::display::{glimpse_vec, GlimpseConfig};
 use crate::ToleranceAdapter;
 use rayon::prelude::*;
@@ -23,7 +23,6 @@ use std::hash::Hash;
 use std::time::Instant;
 use timsrust::converters::{Frame2RtConverter, Scan2ImConverter, Tof2MzConverter};
 use timsrust::readers::{FrameReader, MetadataReader};
-use timsrust::Frame;
 use timsrust::Metadata;
 use timsrust::TimsRustError;
 use tracing::instrument;
@@ -58,7 +57,7 @@ impl QuadSplittedTransposedIndex {
         tof_range: (u32, u32),
         precursor_mz_range: (f64, f64),
         scan_range: Option<(usize, usize)>,
-        rt_range: Option<FrameRTTolerance>,
+        rt_range_seconds: Option<(f32, f32)>,
         f: &mut F,
     ) where
         F: FnMut(PeakInQuad),
@@ -67,7 +66,7 @@ impl QuadSplittedTransposedIndex {
             .get_matching_quad_settings(precursor_mz_range, scan_range)
             .collect();
         trace!("matching_quads: {:?}", matching_quads);
-        self.query_precursor_peaks(&matching_quads, tof_range, scan_range, rt_range, f);
+        self.query_precursor_peaks(&matching_quads, tof_range, scan_range, rt_range_seconds, f);
     }
 
     fn query_precursor_peaks<F>(
@@ -75,7 +74,7 @@ impl QuadSplittedTransposedIndex {
         matching_quads: &[SingleQuadrupoleSettingIndex],
         tof_range: (u32, u32),
         scan_range: Option<(usize, usize)>,
-        rt_range: Option<FrameRTTolerance>,
+        rt_range_seconds: Option<(f32, f32)>,
         f: &mut F,
     ) where
         F: FnMut(PeakInQuad),
@@ -85,7 +84,7 @@ impl QuadSplittedTransposedIndex {
                 .fragment_indices
                 .get(quad)
                 .expect("Only existing quads should be queried.");
-            tqi.query_peaks(tof_range, scan_range, rt_range)
+            tqi.query_peaks(tof_range, scan_range, rt_range_seconds)
                 .for_each(&mut *f);
         }
     }
@@ -242,6 +241,8 @@ impl QuadSplittedTransposedIndexBuilder {
         let out2: Result<Vec<Self>, TimsRustError> = split_frames
             .into_par_iter()
             .map(|(q, frameslices)| {
+                // TODO:Refactor so the internal index is built first and then added.
+                // This should save a couple of thousand un-necessary hashmap lookups.
                 let mut out = Self::new();
                 for frameslice in frameslices {
                     out.add_frame_slice(frameslice);
@@ -308,100 +309,6 @@ impl QuadSplittedTransposedIndexBuilder {
     }
 }
 
-impl<FH: Hash + Copy + Clone + Serialize + Eq + Send + Sync>
-    QueriableData<FragmentGroupIndexQuery<FH>, RawPeak> for QuadSplittedTransposedIndex
-{
-    fn query(&self, fragment_query: &FragmentGroupIndexQuery<FH>) -> Vec<RawPeak> {
-        let precursor_mz_range = (
-            fragment_query.precursor_query.isolation_mz_range.0 as f64,
-            fragment_query.precursor_query.isolation_mz_range.0 as f64,
-        );
-        let scan_range = Some(fragment_query.precursor_query.mobility_index_range);
-        let frame_index_range = Some(FrameRTTolerance::FrameIndex(
-            fragment_query.precursor_query.frame_index_range,
-        ));
-
-        fragment_query
-            .mz_index_ranges
-            .iter()
-            .flat_map(|(_, tof_range)| {
-                let mut local_vec = vec![];
-                self.query_peaks(
-                    *tof_range,
-                    precursor_mz_range,
-                    scan_range,
-                    frame_index_range,
-                    &mut |x| local_vec.push(RawPeak::from(x)),
-                );
-                local_vec.into_iter()
-            })
-            .collect()
-    }
-
-    fn add_query<O, AG: crate::Aggregator<Item = RawPeak, Output = O>>(
-        &self,
-        fragment_query: &FragmentGroupIndexQuery<FH>,
-        aggregator: &mut AG,
-    ) {
-        let precursor_mz_range = (
-            fragment_query.precursor_query.isolation_mz_range.0 as f64,
-            fragment_query.precursor_query.isolation_mz_range.0 as f64,
-        );
-        let scan_range = Some(fragment_query.precursor_query.mobility_index_range);
-        let frame_index_range = Some(FrameRTTolerance::FrameIndex(
-            fragment_query.precursor_query.frame_index_range,
-        ));
-
-        fragment_query
-            .mz_index_ranges
-            .iter()
-            .for_each(|(_, tof_range)| {
-                self.query_peaks(
-                    *tof_range,
-                    precursor_mz_range,
-                    scan_range,
-                    frame_index_range,
-                    &mut |peak| aggregator.add(&RawPeak::from(peak)),
-                );
-            })
-    }
-
-    fn add_query_multi_group<O, AG: crate::Aggregator<Item = RawPeak, Output = O>>(
-        &self,
-        fragment_queries: &[FragmentGroupIndexQuery<FH>],
-        aggregator: &mut [AG],
-    ) {
-        fragment_queries
-            .par_iter()
-            .zip(aggregator.par_iter_mut())
-            .for_each(|(fragment_query, agg)| {
-                let precursor_mz_range = (
-                    fragment_query.precursor_query.isolation_mz_range.0 as f64,
-                    fragment_query.precursor_query.isolation_mz_range.1 as f64,
-                );
-                assert!(precursor_mz_range.0 <= precursor_mz_range.1);
-                assert!(precursor_mz_range.0 > 0.0);
-                let scan_range = Some(fragment_query.precursor_query.mobility_index_range);
-                let frame_index_range = Some(FrameRTTolerance::FrameIndex(
-                    fragment_query.precursor_query.frame_index_range,
-                ));
-
-                for (_, tof_range) in fragment_query.mz_index_ranges.clone().into_iter() {
-                    self.query_peaks(
-                        tof_range,
-                        precursor_mz_range,
-                        scan_range,
-                        frame_index_range,
-                        &mut |peak| agg.add(&RawPeak::from(peak)),
-                    );
-                }
-            });
-    }
-}
-
-// Copy pasting for now ... TODO refactor or delete
-// ============================================================================
-
 impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
     QueriableData<FragmentGroupIndexQuery<FH>, (RawPeak, FH)> for QuadSplittedTransposedIndex
 {
@@ -411,9 +318,6 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
             fragment_query.precursor_query.isolation_mz_range.0 as f64,
         );
         let scan_range = Some(fragment_query.precursor_query.mobility_index_range);
-        let frame_index_range = Some(FrameRTTolerance::FrameIndex(
-            fragment_query.precursor_query.frame_index_range,
-        ));
 
         fragment_query
             .mz_index_ranges
@@ -424,7 +328,7 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
                     *tof_range,
                     precursor_mz_range,
                     scan_range,
-                    frame_index_range,
+                    Some(fragment_query.precursor_query.rt_range_seconds),
                     &mut |x| local_vec.push((RawPeak::from(x), *fh)),
                 );
 
@@ -443,9 +347,6 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
             fragment_query.precursor_query.isolation_mz_range.0 as f64,
         );
         let scan_range = Some(fragment_query.precursor_query.mobility_index_range);
-        let frame_index_range = Some(FrameRTTolerance::FrameIndex(
-            fragment_query.precursor_query.frame_index_range,
-        ));
 
         fragment_query
             .mz_index_ranges
@@ -455,7 +356,7 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
                     *tof_range,
                     precursor_mz_range,
                     scan_range,
-                    frame_index_range,
+                    Some(fragment_query.precursor_query.rt_range_seconds),
                     &mut |peak| aggregator.add(&(RawPeak::from(peak), *fh)),
                 );
             })
@@ -477,9 +378,6 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
                 assert!(precursor_mz_range.0 <= precursor_mz_range.1);
                 assert!(precursor_mz_range.0 > 0.0);
                 let scan_range = Some(fragment_query.precursor_query.mobility_index_range);
-                let frame_index_range = Some(FrameRTTolerance::FrameIndex(
-                    fragment_query.precursor_query.frame_index_range,
-                ));
 
                 let local_quad_vec: Vec<SingleQuadrupoleSettingIndex> = self
                     .get_matching_quad_settings(precursor_mz_range, scan_range)
@@ -490,15 +388,13 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
                         &local_quad_vec,
                         tof_range,
                         scan_range,
-                        frame_index_range,
+                        Some(fragment_query.precursor_query.rt_range_seconds),
                         &mut |peak| agg.add(&(RawPeak::from(peak), fh)),
                     );
                 }
             });
     }
 }
-
-// ============================================================================
 
 impl<FH: Copy + Clone + Serialize + Eq + Hash + Send + Sync>
     ToleranceAdapter<FragmentGroupIndexQuery<FH>, ElutionGroup<FH>>

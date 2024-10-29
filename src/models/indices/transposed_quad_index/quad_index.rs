@@ -74,17 +74,12 @@ impl TransposedQuadIndex {
         &self,
         tof_range: (u32, u32),
         scan_range: Option<(usize, usize)>,
-        rt_range: Option<FrameRTTolerance>,
+        rt_range: Option<(f32, f32)>,
     ) -> impl Iterator<Item = PeakInQuad> + '_ {
-        // This version is not compatible with the borrow checker unless I collect the vec...
-        // which will do for now for prototyping.
-        // TODO: make this a single type and convert upstream.
-        let frame_index_range = self.convert_to_local_frame_range(rt_range);
-
         self.peak_buckets
             .range(tof_range.0..tof_range.1)
             .flat_map(move |(tof_index, pb)| {
-                pb.query_peaks(scan_range, frame_index_range)
+                pb.query_peaks(scan_range, rt_range)
                     .map(move |p| PeakInQuad::from_peak_in_bucket(p, *tof_index))
             })
     }
@@ -199,7 +194,14 @@ impl TransposedQuadIndexBuilder {
         self.frame_rts.push(slice.rt);
     }
 
-    #[instrument(skip(self))]
+    #[instrument(
+        name = "TransposedQuadIndex::build",
+        skip(self),
+        fields(
+            num_frames = %self.frame_indices.len(),
+            quad_settings = format!("{:?}", self.quad_settings),
+        )
+    )]
     pub fn build(self) -> TransposedQuadIndex {
         // TODO: Refactor this function, its getting pretty large.
         let max_tof = *self
@@ -279,6 +281,15 @@ impl TransposedQuadIndexBuilder {
         }
     }
 
+    #[instrument(
+        name = "TransposedQuadIndex::build_inner_ref",
+        skip(self, peak_buckets),
+        fields(
+            num_frames = %self.frame_indices.len(),
+            quad_settings = format!("{:?}", self.quad_settings),
+            peak_buckets = %peak_buckets.len(),
+        )
+    )]
     fn build_inner_ref(
         self,
         mut peak_buckets: HashMap<u32, PeakBucketBuilder>,
@@ -338,6 +349,15 @@ impl TransposedQuadIndexBuilder {
         peak_buckets
     }
 
+    #[instrument(
+        name = "TransposedQuadIndex::batched_build_inner",
+        skip(self, peak_buckets),
+        fields(
+            num_frames = %self.frame_indices.len(),
+            quad_settings = format!("{:?}", self.quad_settings),
+            peak_buckets = %peak_buckets.len(),
+        )
+    )]
     fn batched_build_inner(
         self,
         mut peak_buckets: HashMap<u32, PeakBucketBuilder>,
@@ -384,23 +404,6 @@ impl TransposedQuadIndexBuilder {
             let mut slice_start = 0;
             let mut slice_start_val = tof_slice[0];
             while slice_start < int_slice.len() {
-                // // Binary search the current value + 1
-                // let slice_end = tof_slice.binary_search(&(slice_start_val + 1));
-
-                // // let local_slice_end = slice_end.unwrap_or_else(|x| x);
-                // let local_slice_end = match slice_end {
-                //     Ok(x) => {
-                //         // If the value is found, we need to walk back to find the first instance
-                //         // of the value ...
-                //         let mut local_slice_end = x;
-                //         while tof_slice[local_slice_end - 1] > slice_start_val {
-                //             local_slice_end -= 1;
-                //         }
-                //         local_slice_end
-                //     }
-                //     Err(x) => x,
-                // };
-                //
                 let mut local_slice_end = slice_start;
                 while tof_slice[local_slice_end] == slice_start_val {
                     local_slice_end += 1;
@@ -424,12 +427,18 @@ impl TransposedQuadIndexBuilder {
 
                 added_peaks += range_use.len() as u64;
 
-                assert!(slice_start_val == tof_slice[slice_start]);
+                assert!(
+                    slice_start_val == tof_slice[slice_start],
+                    "Not all elements in slice have the same tof value"
+                );
 
                 if local_slice_end == tof_slice.len() {
                     break;
                 }
-                assert!(slice_start_val < tof_slice[local_slice_end]);
+                assert!(
+                    slice_start_val < tof_slice[local_slice_end],
+                    "The next element after this slice should have a higher tof value"
+                );
 
                 slice_start = local_slice_end;
                 slice_start_val = tof_slice[slice_start];

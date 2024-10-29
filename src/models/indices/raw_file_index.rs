@@ -1,10 +1,8 @@
-use std::sync::Arc;
-
 use crate::models::frames::raw_frames::frame_elems_matching;
 use crate::models::frames::raw_peak::RawPeak;
 use crate::models::queries::{FragmentGroupIndexQuery, NaturalPrecursorQuery, PrecursorIndexQuery};
 use crate::traits::aggregator::Aggregator;
-use crate::traits::indexed_data::QueriableData;
+use crate::traits::queriable_data::QueriableData;
 use crate::ElutionGroup;
 use crate::ToleranceAdapter;
 use rayon::iter::ParallelIterator;
@@ -40,6 +38,7 @@ impl RawFileIndex {
                 self.meta_converters.rt_converter.invert(query.rt_range.0) as usize,
                 self.meta_converters.rt_converter.invert(query.rt_range.1) as usize,
             ),
+            rt_range_seconds: query.rt_range,
             mz_index_range: (
                 self.meta_converters.mz_converter.invert(query.mz_range.0) as u32,
                 self.meta_converters.mz_converter.invert(query.mz_range.1) as u32,
@@ -64,7 +63,7 @@ impl RawFileIndex {
     >(
         &'a self,
         fqs: &'b FragmentGroupIndexQuery<FH>,
-        fun: &'c mut dyn for<'r> FnMut(RawPeak, Arc<QuadrupoleSettings>),
+        fun: &'c mut dyn for<'r> FnMut(RawPeak, FH),
     ) {
         trace!("RawFileIndex::apply_on_query");
         trace!("FragmentGroupIndexQuery: {:?}", fqs);
@@ -77,7 +76,7 @@ impl RawFileIndex {
         let pq = &fqs.precursor_query;
         let iso_mz_range = pq.isolation_mz_range;
         for frame in frames {
-            for (_, tof_range) in fqs.mz_index_ranges.iter() {
+            for (fh, tof_range) in fqs.mz_index_ranges.iter() {
                 let scan_range = pq.mobility_index_range;
                 let peaks = frame_elems_matching(
                     &frame,
@@ -86,7 +85,7 @@ impl RawFileIndex {
                     Some((iso_mz_range.0 as f64, iso_mz_range.1 as f64)),
                 );
                 for peak in peaks {
-                    fun(peak, frame.quadrupole_settings.clone());
+                    fun(peak, *fh);
                 }
             }
         }
@@ -139,6 +138,7 @@ impl RawFileIndex {
                 self.meta_converters.rt_converter.invert(rt_range.0) as usize,
                 self.meta_converters.rt_converter.invert(rt_range.1) as usize,
             ),
+            rt_range_seconds: rt_range,
             mz_index_range: (
                 self.meta_converters.mz_converter.invert(mz_range.0) as u32,
                 self.meta_converters.mz_converter.invert(mz_range.1) as u32,
@@ -185,23 +185,23 @@ impl RawFileIndex {
 }
 
 impl<FH: Hash + Copy + Clone + Serialize + Eq + Debug + Send + Sync>
-    QueriableData<FragmentGroupIndexQuery<FH>, RawPeak> for RawFileIndex
+    QueriableData<FragmentGroupIndexQuery<FH>, (RawPeak, FH)> for RawFileIndex
 {
-    fn query(&self, fragment_query: &FragmentGroupIndexQuery<FH>) -> Vec<RawPeak> {
+    fn query(&self, fragment_query: &FragmentGroupIndexQuery<FH>) -> Vec<(RawPeak, FH)> {
         let mut out = Vec::new();
-        self.apply_on_query(fragment_query, &mut |peak, _| out.push(peak));
+        self.apply_on_query(fragment_query, &mut |x, y| out.push((x, y)));
         out
     }
 
-    fn add_query<O, AG: Aggregator<Item = RawPeak, Output = O>>(
+    fn add_query<O, AG: Aggregator<Item = (RawPeak, FH), Output = O>>(
         &self,
         fragment_query: &FragmentGroupIndexQuery<FH>,
         aggregator: &mut AG,
     ) {
-        self.apply_on_query(fragment_query, &mut |peak, _| aggregator.add(&peak));
+        self.apply_on_query(fragment_query, &mut |x, y| aggregator.add(&(x, y)));
     }
 
-    fn add_query_multi_group<O, AG: crate::Aggregator<Item = RawPeak, Output = O>>(
+    fn add_query_multi_group<O, AG: crate::Aggregator<Item = (RawPeak, FH), Output = O>>(
         &self,
         fragment_queries: &[FragmentGroupIndexQuery<FH>],
         aggregator: &mut [AG],

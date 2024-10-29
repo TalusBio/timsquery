@@ -3,23 +3,28 @@ use crate::traits::aggregator::Aggregator;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy)]
-pub struct RawPeakIntensityAggregator {
+pub struct RawPeakIntensityAggregator<T> {
     pub id: u64,
     pub intensity: u64,
+    _phantom: std::marker::PhantomData<T>,
 }
 
-impl RawPeakIntensityAggregator {
+impl<T: Send + Sync> RawPeakIntensityAggregator<T> {
     pub fn new(id: u64) -> Self {
-        Self { id, intensity: 0 }
+        Self {
+            id,
+            intensity: 0,
+            _phantom: std::marker::PhantomData,
+        }
     }
 }
 
-impl Aggregator for RawPeakIntensityAggregator {
-    type Item = RawPeak;
+impl<T: Send + Sync> Aggregator for RawPeakIntensityAggregator<T> {
+    type Item = (RawPeak, T);
     type Output = u64;
 
-    fn add(&mut self, peak: &RawPeak) {
-        self.intensity += peak.intensity as u64;
+    fn add(&mut self, peak: &(RawPeak, T)) {
+        self.intensity += peak.0.intensity as u64;
     }
 
     fn finalize(self) -> u64 {

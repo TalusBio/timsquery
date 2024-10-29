@@ -62,6 +62,7 @@ impl<FH: Copy + Clone + Serialize + Eq + Hash + Send + Sync>
 
         let precursor_query = PrecursorIndexQuery {
             frame_index_range,
+            rt_range_seconds: rt_range,
             mz_index_range,
             mobility_index_range,
             isolation_mz_range: quad_range,

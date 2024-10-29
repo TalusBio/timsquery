@@ -5,7 +5,6 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use std::time::Instant;
 use timsrust::converters::{Scan2ImConverter, Tof2MzConverter};
 use timsrust::{AcquisitionType, Frame, MSLevel, QuadrupoleSettings};
 
@@ -13,6 +12,7 @@ use super::peak_in_quad::PeakInQuad;
 use crate::sort_vecs_by_first;
 use crate::utils::compress_explode::explode_vec;
 use crate::utils::frame_processing::{lazy_centroid_weighted_frame, PeakArrayRefs};
+use crate::utils::sorting::top_n;
 use crate::utils::tolerance_ranges::{scan_tol_range, tof_tol_range};
 use timsrust::{
     readers::{FrameReader, FrameReaderError, MetadataReaderError},
@@ -452,6 +452,14 @@ pub fn par_read_and_expand_frames(
         all_expanded_frames.extend(expanded_frames);
     }
 
+    let slice_infos: Vec<ExpandedQuadSliceInfo> = all_expanded_frames
+        .values()
+        .map(|x| ExpandedQuadSliceInfo::new(x))
+        .collect();
+
+    println!("Slice info: {:?}", slice_infos);
+    panic!();
+
     info!("Processing MS1 frames");
     let ms1_iter = frame_reader.parallel_filter(|x| x.ms_level == MSLevel::MS1);
     let ms1_iter = warn_and_skip_badframes(ms1_iter);
@@ -479,6 +487,212 @@ pub fn par_read_and_expand_frames(
     info!("Done reading and expanding frames");
 
     Ok(all_expanded_frames)
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ExpandedQuadSliceInfo {
+    pub quad_settings: Option<SingleQuadrupoleSetting>,
+    pub cycle_time_seconds: f64,
+    pub peak_width_seconds: Option<f64>,
+}
+
+impl ExpandedQuadSliceInfo {
+    #[instrument(skip(frameslices), ret)]
+    pub fn new(frameslices: &[ExpandedFrameSlice<SortedState>]) -> Self {
+        let avg_cycle_time = frameslices
+            .windows(2)
+            .map(|x| {
+                let a = &x[0];
+                let b = &x[1];
+                let diff = b.rt - a.rt;
+                assert!(diff > 0.0);
+                diff
+            })
+            .sum::<f64>()
+            / frameslices.len() as f64;
+
+        let peak_width = Self::estimate_peak_width(frameslices);
+
+        Self {
+            quad_settings: frameslices[0].quadrupole_settings,
+            cycle_time_seconds: avg_cycle_time,
+            peak_width_seconds: peak_width,
+        }
+    }
+
+    /// Estimate the peak width of elutions within the quad.
+    ///
+    /// This is a pretty dumb algorithm ... basically...
+    /// 1. picks 100 equally spaced points between the 20% and 80% of the frames.
+    /// 2. At each of those points finds the top 10 peaks.
+    /// 3. For each of them iteratively goes forward and backwards in time until
+    ///    the intensity of the peak drops under 1% of its intensity.
+    /// 4. The time difference between the forward and backward point is the peak width.
+    /// 5. Finds the median of the peak widths.
+    ///
+    ///
+    fn estimate_peak_width(frameslices: &[ExpandedFrameSlice<SortedState>]) -> Option<f64> {
+        let start_idx = frameslices.len() / 5;
+        let end_idx = frameslices.len() * 4 / 5;
+        let step = (end_idx - start_idx) / 100;
+
+        if step == 0 {
+            warn!("Estimating peak width failed, step is 0");
+            return None;
+        }
+
+        #[derive(Debug, Clone)]
+        struct Peak {
+            tof: u32,
+            patience: u32,
+            max_rt: f64,
+            min_rt: f64,
+            intensity: u32,
+            local_frame_index: usize,
+            fwdone: bool,
+            bwdone: bool,
+            any_update: bool,
+        }
+
+        let mut peaks: Vec<Peak> = Vec::with_capacity(500);
+
+        for i in 0..49 {
+            let local_idx = start_idx + i * step;
+
+            let local_frame = &frameslices[local_idx];
+            let local_rt = local_frame.rt;
+            let (top_intens, top_indices) = top_n(&local_frame.intensities, 10);
+            let tofs: Vec<_> = top_indices
+                .iter()
+                .zip(top_intens.iter())
+                .filter_map(|(tof, inten)| if *inten > 100u32 { Some(tof) } else { None })
+                .map(|x| local_frame.tof_indices[*x])
+                .collect();
+            let tofs: Vec<u32> = tofs
+                .as_slice()
+                .windows(2)
+                .filter_map(|x| {
+                    let a = x[0];
+                    let b = x[1];
+                    if a.abs_diff(b) > 5 {
+                        Some(a)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            let mut local_peaks: Vec<Peak> = tofs
+                .iter()
+                .map(|tof| {
+                    let mut local_inten = 0u32;
+                    local_frame.query_peaks((tof - 1, tof + 1), None, &mut |x| {
+                        local_inten += x.intensity
+                    });
+                    assert!(local_inten > 0);
+                    Peak {
+                        tof: *tof,
+                        patience: 1,
+                        max_rt: local_rt,
+                        min_rt: local_rt,
+                        intensity: local_inten,
+                        local_frame_index: local_idx,
+                        fwdone: false,
+                        bwdone: false,
+                        any_update: false,
+                    }
+                })
+                .collect();
+
+            // Forward lookup
+            for lookup_frame in frameslices.iter().skip(local_idx + 1) {
+                let local_rt = lookup_frame.rt;
+                let mut any = false;
+                for peak in local_peaks.iter_mut() {
+                    if peak.fwdone {
+                        continue;
+                    }
+                    let mut local_int = 0u32;
+                    lookup_frame.query_peaks((peak.tof - 1, peak.tof + 1), None, &mut |x| {
+                        local_int += x.intensity
+                    });
+                    if local_int > (peak.intensity / 100) {
+                        peak.max_rt = local_rt;
+                        peak.patience = 1;
+                        peak.any_update = true;
+                    } else if peak.patience > 0 {
+                        peak.patience -= 1;
+                    } else {
+                        peak.fwdone = true;
+                    }
+
+                    any = true;
+                }
+                if !any {
+                    break;
+                }
+            }
+
+            // reset patience
+            for peak in local_peaks.iter_mut() {
+                peak.patience = 1;
+            }
+
+            // Backward lookup
+            let mut j = local_idx - 1;
+            while j > 1 {
+                // for j in (0..local_idx).rev() {
+                let lookup_frame = &frameslices[j];
+                let local_rt = lookup_frame.rt;
+                let mut any = false;
+                for peak in local_peaks.iter_mut() {
+                    if peak.bwdone {
+                        continue;
+                    }
+                    let mut local_int = 0;
+                    lookup_frame.query_peaks((peak.tof - 1, peak.tof + 1), None, &mut |x| {
+                        local_int += x.intensity
+                    });
+
+                    if local_int > (peak.intensity / 100) {
+                        peak.min_rt = local_rt;
+                        peak.patience = 1;
+                        peak.any_update = true;
+                    } else if peak.patience > 0 {
+                        peak.patience -= 1;
+                    } else {
+                        peak.bwdone = true;
+                    }
+
+                    any = true;
+                }
+                if !any {
+                    break;
+                }
+                j -= 1;
+            }
+
+            for peak in local_peaks.into_iter() {
+                println!("peak: {:?}", peak);
+                if peak.fwdone && peak.bwdone && peak.any_update {
+                    peaks.push(peak);
+                }
+            }
+        }
+
+        if peaks.is_empty() {
+            return None;
+        }
+
+        // get median
+        peaks.sort_by(|x, y| {
+            (x.max_rt - x.min_rt)
+                .partial_cmp(&(y.max_rt - y.min_rt))
+                .unwrap()
+        });
+        let median = peaks[peaks.len() / 2].max_rt - peaks[peaks.len() / 2].min_rt;
+        Some(median)
+    }
 }
 
 #[instrument(skip(frames))]

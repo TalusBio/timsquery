@@ -7,10 +7,11 @@ use crate::models::frames::expanded_frame::{
 use crate::models::frames::peak_in_quad::PeakInQuad;
 use crate::models::frames::raw_peak::RawPeak;
 use crate::models::frames::single_quad_settings::{
-    get_matching_quad_settings, SingleQuadrupoleSetting, SingleQuadrupoleSettingIndex,
+    get_matching_quad_settings, matches_quad_settings, SingleQuadrupoleSetting,
+    SingleQuadrupoleSettingIndex,
 };
 use crate::models::queries::FragmentGroupIndexQuery;
-use crate::traits::indexed_data::QueriableData;
+use crate::traits::queriable_data::QueriableData;
 use crate::ToleranceAdapter;
 use rayon::prelude::*;
 use serde::Serialize;
@@ -240,139 +241,98 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
         fragment_queries: &[FragmentGroupIndexQuery<FH>],
         aggregator: &mut [AG],
     ) {
-        fragment_queries
-            .par_iter()
-            .zip(aggregator.par_iter_mut())
-            .for_each(|(fragment_query, agg)| {
-                let precursor_mz_range = (
-                    fragment_query.precursor_query.isolation_mz_range.0 as f64,
-                    fragment_query.precursor_query.isolation_mz_range.1 as f64,
-                );
-                assert!(precursor_mz_range.0 <= precursor_mz_range.1);
-                assert!(precursor_mz_range.0 > 0.0);
-                let scan_range = Some(fragment_query.precursor_query.mobility_index_range);
-                let frame_index_range = fragment_query.precursor_query.frame_index_range;
+        // fragment_queries
+        //     .par_iter()
+        //     .zip(aggregator.par_iter_mut())
+        //     .for_each(|(fragment_query, agg)| {
+        //         let precursor_mz_range = (
+        //             fragment_query.precursor_query.isolation_mz_range.0 as f64,
+        //             fragment_query.precursor_query.isolation_mz_range.1 as f64,
+        //         );
+        //         assert!(precursor_mz_range.0 <= precursor_mz_range.1);
+        //         assert!(precursor_mz_range.0 > 0.0);
+        //         let scan_range = Some(fragment_query.precursor_query.mobility_index_range);
+        //         let frame_index_range = fragment_query.precursor_query.frame_index_range;
 
-                let local_quad_vec: Vec<SingleQuadrupoleSettingIndex> = get_matching_quad_settings(
-                    &self.flat_quad_settings,
-                    precursor_mz_range,
-                    scan_range,
+        //         let local_quad_vec: Vec<SingleQuadrupoleSettingIndex> = get_matching_quad_settings(
+        //             &self.flat_quad_settings,
+        //             precursor_mz_range,
+        //             scan_range,
+        //         )
+        //         .collect();
+
+        //         for (fh, tof_range) in fragment_query.mz_index_ranges.clone().into_iter() {
+        //             self.query_precursor_peaks(
+        //                 &local_quad_vec,
+        //                 tof_range,
+        //                 scan_range,
+        //                 frame_index_range,
+        //                 &mut |peak| agg.add(&(RawPeak::from(peak), fh)),
+        //             );
+        //         }
+        //     });
+        let prec_mz_ranges = fragment_queries
+            .iter()
+            .map(|x| {
+                (
+                    x.precursor_query.isolation_mz_range.0 as f64,
+                    x.precursor_query.isolation_mz_range.0 as f64,
                 )
-                .collect();
+            })
+            .collect::<Vec<_>>();
 
-                for (fh, tof_range) in fragment_query.mz_index_ranges.clone().into_iter() {
-                    self.query_precursor_peaks(
-                        &local_quad_vec,
-                        tof_range,
-                        scan_range,
-                        frame_index_range,
-                        &mut |peak| agg.add(&(RawPeak::from(peak), fh)),
+        let scan_ranges = fragment_queries
+            .iter()
+            .map(|x| Some(x.precursor_query.mobility_index_range))
+            .collect::<Vec<_>>();
+
+        let frame_index_ranges = fragment_queries
+            .iter()
+            .map(|x| x.precursor_query.frame_index_range)
+            .collect::<Vec<_>>();
+
+        for quad_setting in self.flat_quad_settings.iter() {
+            let local_index = quad_setting.index;
+
+            let tqi = self
+                .bundled_frames
+                .get(&local_index)
+                .expect("Only existing quads should be queried.");
+
+            // for i in 0..prec_mz_ranges.len() {
+            //     if !matches_quad_settings(quad_setting, prec_mz_ranges[i], scan_ranges[i]) {
+            //         continue;
+            //     }
+
+            //     for (fh, tof_range) in fragment_queries[i].mz_index_ranges.iter() {
+            //         let mut local_lambda = |peak| aggregator[i].add(&(RawPeak::from(peak), *fh));
+            //         tqi.query_peaks(
+            //             *tof_range,
+            //             scan_ranges[i],
+            //             frame_index_ranges[i],
+            //             &mut local_lambda,
+            //         )
+            //     }
+            // }
+
+            aggregator.par_iter_mut().enumerate().for_each(|(i, agg)| {
+                if !matches_quad_settings(quad_setting, prec_mz_ranges[i], scan_ranges[i]) {
+                    return;
+                }
+
+                for (fh, tof_range) in fragment_queries[i].mz_index_ranges.iter() {
+                    let mut local_lambda = |peak| agg.add(&(RawPeak::from(peak), *fh));
+                    tqi.query_peaks(
+                        *tof_range,
+                        scan_ranges[i],
+                        frame_index_ranges[i],
+                        &mut local_lambda,
                     );
                 }
             });
+        }
     }
 }
-
-impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
-    QueriableData<FragmentGroupIndexQuery<FH>, RawPeak> for ExpandedRawFrameIndex
-{
-    fn query(&self, fragment_query: &FragmentGroupIndexQuery<FH>) -> Vec<RawPeak> {
-        todo!();
-        // let precursor_mz_range = (
-        //     fragment_query.precursor_query.isolation_mz_range.0 as f64,
-        //     fragment_query.precursor_query.isolation_mz_range.0 as f64,
-        // );
-        // let scan_range = Some(fragment_query.precursor_query.mobility_index_range);
-        // let frame_index_range = Some(FrameRTTolerance::FrameIndex(
-        //     fragment_query.precursor_query.frame_index_range,
-        // ));
-
-        // fragment_query
-        //     .mz_index_ranges
-        //     .iter()
-        //     .flat_map(|(fh, tof_range)| {
-        //         let mut local_vec: Vec<(RawPeak, FH)> = vec![];
-        //         self.query_peaks(
-        //             *tof_range,
-        //             precursor_mz_range,
-        //             scan_range,
-        //             frame_index_range,
-        //             &mut |x| local_vec.push((RawPeak::from(x), *fh)),
-        //         );
-
-        //         local_vec
-        //     })
-        //     .collect()
-    }
-
-    fn add_query<O, AG: crate::Aggregator<Item = RawPeak, Output = O>>(
-        &self,
-        fragment_query: &FragmentGroupIndexQuery<FH>,
-        aggregator: &mut AG,
-    ) {
-        todo!();
-        // let precursor_mz_range = (
-        //     fragment_query.precursor_query.isolation_mz_range.0 as f64,
-        //     fragment_query.precursor_query.isolation_mz_range.0 as f64,
-        // );
-        // let scan_range = Some(fragment_query.precursor_query.mobility_index_range);
-        // let frame_index_range = Some(FrameRTTolerance::FrameIndex(
-        //     fragment_query.precursor_query.frame_index_range,
-        // ));
-
-        // fragment_query
-        //     .mz_index_ranges
-        //     .iter()
-        //     .for_each(|(fh, tof_range)| {
-        //         self.query_peaks(
-        //             *tof_range,
-        //             precursor_mz_range,
-        //             scan_range,
-        //             frame_index_range,
-        //             &mut |peak| aggregator.add(&(RawPeak::from(peak), *fh)),
-        //         );
-        //     })
-    }
-
-    fn add_query_multi_group<O, AG: crate::Aggregator<Item = RawPeak, Output = O>>(
-        &self,
-        fragment_queries: &[FragmentGroupIndexQuery<FH>],
-        aggregator: &mut [AG],
-    ) {
-        fragment_queries
-            .par_iter()
-            .zip(aggregator.par_iter_mut())
-            .for_each(|(fragment_query, agg)| {
-                let precursor_mz_range = (
-                    fragment_query.precursor_query.isolation_mz_range.0 as f64,
-                    fragment_query.precursor_query.isolation_mz_range.1 as f64,
-                );
-                assert!(precursor_mz_range.0 <= precursor_mz_range.1);
-                assert!(precursor_mz_range.0 > 0.0);
-                let scan_range = Some(fragment_query.precursor_query.mobility_index_range);
-                let frame_index_range = fragment_query.precursor_query.frame_index_range;
-
-                let local_quad_vec: Vec<SingleQuadrupoleSettingIndex> = get_matching_quad_settings(
-                    &self.flat_quad_settings,
-                    precursor_mz_range,
-                    scan_range,
-                )
-                .collect();
-
-                for (fh, tof_range) in fragment_query.mz_index_ranges.clone().into_iter() {
-                    self.query_precursor_peaks(
-                        &local_quad_vec,
-                        tof_range,
-                        scan_range,
-                        frame_index_range,
-                        &mut |peak| agg.add(&RawPeak::from(peak)),
-                    );
-                }
-            });
-    }
-}
-
-// ============================================================================
 
 impl<FH: Copy + Clone + Serialize + Eq + Hash + Send + Sync>
     ToleranceAdapter<FragmentGroupIndexQuery<FH>, ElutionGroup<FH>> for ExpandedRawFrameIndex

@@ -354,7 +354,6 @@ fn run_batch_access_benchmark(raw_file_path: &Path, env_config: EnvConfig) -> Ve
             |index, _i| {
                 let tmp = query_multi_group(
                     index,
-                    index,
                     &tolerance,
                     &query_groups,
                     &RawPeakIntensityAggregator::new,
@@ -375,7 +374,6 @@ fn run_batch_access_benchmark(raw_file_path: &Path, env_config: EnvConfig) -> Ve
             || ExpandedRawFrameIndex::from_path(raw_file_path).unwrap(),
             |index, _i| {
                 let tmp = query_multi_group(
-                    index,
                     index,
                     &tolerance,
                     &query_groups,
@@ -401,7 +399,6 @@ fn run_batch_access_benchmark(raw_file_path: &Path, env_config: EnvConfig) -> Ve
             |index, _i| {
                 let tmp = query_multi_group(
                     index,
-                    index,
                     &tolerance,
                     &query_groups,
                     &RawPeakIntensityAggregator::new,
@@ -426,7 +423,6 @@ fn run_batch_access_benchmark(raw_file_path: &Path, env_config: EnvConfig) -> Ve
             |index, _i| {
                 let tmp = query_multi_group(
                     index,
-                    index,
                     &tolerance,
                     &query_groups,
                     &RawPeakIntensityAggregator::new,
@@ -447,7 +443,6 @@ fn run_batch_access_benchmark(raw_file_path: &Path, env_config: EnvConfig) -> Ve
             || QuadSplittedTransposedIndex::from_path_centroided(raw_file_path).unwrap(),
             |index, _i| {
                 let tmp = query_multi_group(
-                    index,
                     index,
                     &tolerance,
                     &query_groups,

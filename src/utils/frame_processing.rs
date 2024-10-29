@@ -1,5 +1,4 @@
 use crate::sort_vecs_by_first;
-use std::cmp::Ordering;
 use std::ops::RangeInclusive;
 use tracing::{error, info, warn};
 
@@ -55,29 +54,6 @@ impl<'a> PeakArrayRefs<'a> {
     fn len(&self) -> usize {
         self.tof_array.len()
     }
-}
-
-/// Splits a global index into a major and minor that
-/// matches elements in a collection.
-///
-/// As an example if there is a slice of slices, the major index
-/// is the index of the slice and the minor index is the index
-/// of the element in the slice.
-///
-/// Thus if we have      [[0,1,2], [3,4,5], [6,7,8]]
-/// the major indice are   0,0,0    1,1,1    2,2,2
-/// and the minor          0,1,2    0,1,2    0,1,2
-///
-///
-fn index_split(index: usize, slice_sizes: &[usize]) -> (usize, usize) {
-    let mut index = index;
-    for (i, slice_size) in slice_sizes.iter().enumerate() {
-        if index < *slice_size {
-            return (i, index);
-        }
-        index -= *slice_size;
-    }
-    panic!("Index {} is out of bounds", index);
 }
 
 // TODO: Refactor this function

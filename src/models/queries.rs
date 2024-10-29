@@ -4,6 +4,7 @@ use std::hash::Hash;
 #[derive(Debug, Clone)]
 pub struct PrecursorIndexQuery {
     pub frame_index_range: (usize, usize),
+    pub rt_range_seconds: (f32, f32),
     pub mz_index_range: (u32, u32),
     pub mobility_index_range: (usize, usize),
     pub isolation_mz_range: (f32, f32),

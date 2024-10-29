@@ -134,34 +134,47 @@ pub fn get_matching_quad_settings(
     flat_quad_settings
         .iter()
         .filter(move |qs| {
-            (qs.ranges.isolation_low <= precursor_mz_range.1)
-                && (qs.ranges.isolation_high >= precursor_mz_range.0)
-        })
-        .filter(move |qs| {
-            match scan_range {
-                Some((min_scan, max_scan)) => {
-                    assert!(qs.ranges.scan_start <= qs.ranges.scan_end);
-                    assert!(min_scan <= max_scan);
-
-                    // Above quad
-                    // Quad                   [----------]
-                    // Query                               [------]
-                    let above_quad = qs.ranges.scan_end < min_scan;
-
-                    // Below quad
-                    // Quad                  [------]
-                    // Query       [------]
-                    let below_quad = qs.ranges.scan_start > max_scan;
-
-                    if above_quad || below_quad {
-                        // This quad is completely outside the scan range
-                        false
-                    } else {
-                        true
-                    }
-                }
-                None => true,
-            }
+            matches_iso_window(qs, precursor_mz_range) && matches_scan_range(qs, scan_range)
         })
         .map(|e| e.index)
+}
+
+fn matches_iso_window(qs: &SingleQuadrupoleSetting, precursor_mz_range: (f64, f64)) -> bool {
+    (qs.ranges.isolation_low <= precursor_mz_range.1)
+        && (qs.ranges.isolation_high >= precursor_mz_range.0)
+}
+
+fn matches_scan_range(qs: &SingleQuadrupoleSetting, scan_range: Option<(usize, usize)>) -> bool {
+    match scan_range {
+        Some((min_scan, max_scan)) => {
+            assert!(qs.ranges.scan_start <= qs.ranges.scan_end);
+            assert!(min_scan <= max_scan);
+
+            // Above quad
+            // Quad                   [----------]
+            // Query                               [------]
+            let above_quad = qs.ranges.scan_end < min_scan;
+
+            // Below quad
+            // Quad                  [------]
+            // Query       [------]
+            let below_quad = qs.ranges.scan_start > max_scan;
+
+            if above_quad || below_quad {
+                // This quad is completely outside the scan range
+                false
+            } else {
+                true
+            }
+        }
+        None => true,
+    }
+}
+
+pub fn matches_quad_settings(
+    a: &SingleQuadrupoleSetting,
+    precursor_mz_range: (f64, f64),
+    scan_range: Option<(usize, usize)>,
+) -> bool {
+    matches_iso_window(a, precursor_mz_range) && matches_scan_range(a, scan_range)
 }

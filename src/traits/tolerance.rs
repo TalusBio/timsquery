@@ -113,12 +113,11 @@ impl Tolerance for DefaultTolerance {
     }
 }
 
-// TODO decide whether to kill this one or to change the interrface
-// and how to propagate identifiers.
-pub trait HasIntegerID {
-    fn get_id(&self) -> u64;
-}
-
-pub trait ToleranceAdapter<QF, T: HasIntegerID> {
+/// A trait that can be implemented by types that can convert
+/// elution groups into queries.
+///
+/// The elution group here is generic but most regularly it will be
+/// an `ElutionGroup` struct.
+pub trait ToleranceAdapter<QF, T> {
     fn query_from_elution_group(&self, tol: &dyn Tolerance, elution_group: &T) -> QF;
 }
