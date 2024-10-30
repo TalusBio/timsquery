@@ -1,4 +1,4 @@
-use super::quad_index::{FrameRTTolerance, TransposedQuadIndex, TransposedQuadIndexBuilder};
+use super::quad_index::{TransposedQuadIndex, TransposedQuadIndexBuilder};
 use crate::models::adapters::FragmentIndexAdapter;
 use crate::models::elution_group::ElutionGroup;
 use crate::models::frames::expanded_frame::{
@@ -11,6 +11,7 @@ use crate::models::frames::single_quad_settings::{
     get_matching_quad_settings, SingleQuadrupoleSetting, SingleQuadrupoleSettingIndex,
 };
 use crate::models::queries::FragmentGroupIndexQuery;
+use crate::traits::aggregator::Aggregator;
 use crate::traits::queriable_data::QueriableData;
 use crate::utils::display::{glimpse_vec, GlimpseConfig};
 use crate::ToleranceAdapter;
@@ -337,11 +338,11 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
             .collect()
     }
 
-    fn add_query<O, AG: crate::Aggregator<Item = (RawPeak, FH), Output = O>>(
-        &self,
-        fragment_query: &FragmentGroupIndexQuery<FH>,
-        aggregator: &mut AG,
-    ) {
+    fn add_query<A, O, AG>(&self, fragment_query: &FragmentGroupIndexQuery<FH>, aggregator: &mut AG)
+    where
+        A: From<(RawPeak, FH)> + Send + Sync + Clone + Copy,
+        AG: Aggregator<Item = A, Output = O>,
+    {
         let precursor_mz_range = (
             fragment_query.precursor_query.isolation_mz_range.0 as f64,
             fragment_query.precursor_query.isolation_mz_range.0 as f64,
@@ -357,16 +358,19 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
                     precursor_mz_range,
                     scan_range,
                     Some(fragment_query.precursor_query.rt_range_seconds),
-                    &mut |peak| aggregator.add(&(RawPeak::from(peak), *fh)),
+                    &mut |peak| aggregator.add((RawPeak::from(peak), *fh)),
                 );
             })
     }
 
-    fn add_query_multi_group<O, AG: crate::Aggregator<Item = (RawPeak, FH), Output = O>>(
+    fn add_query_multi_group<A, O, AG>(
         &self,
         fragment_queries: &[FragmentGroupIndexQuery<FH>],
         aggregator: &mut [AG],
-    ) {
+    ) where
+        A: From<(RawPeak, FH)> + Send + Sync + Clone + Copy,
+        AG: Aggregator<Item = A, Output = O>,
+    {
         fragment_queries
             .par_iter()
             .zip(aggregator.par_iter_mut())
@@ -389,7 +393,7 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
                         tof_range,
                         scan_range,
                         Some(fragment_query.precursor_query.rt_range_seconds),
-                        &mut |peak| agg.add(&(RawPeak::from(peak), fh)),
+                        &mut |peak| agg.add((RawPeak::from(peak), fh)),
                     );
                 }
             });

@@ -12,7 +12,7 @@ use std::hash::Hash;
 use timsrust::converters::ConvertableDomain;
 use timsrust::readers::{FrameReader, FrameReaderError, MetadataReader};
 use timsrust::TimsRustError;
-use timsrust::{Frame, Metadata, QuadrupoleSettings};
+use timsrust::{Frame, Metadata};
 use tracing::trace;
 
 pub struct RawFileIndex {
@@ -193,19 +193,22 @@ impl<FH: Hash + Copy + Clone + Serialize + Eq + Debug + Send + Sync>
         out
     }
 
-    fn add_query<O, AG: Aggregator<Item = (RawPeak, FH), Output = O>>(
-        &self,
-        fragment_query: &FragmentGroupIndexQuery<FH>,
-        aggregator: &mut AG,
-    ) {
-        self.apply_on_query(fragment_query, &mut |x, y| aggregator.add(&(x, y)));
+    fn add_query<A, O, AG>(&self, fragment_query: &FragmentGroupIndexQuery<FH>, aggregator: &mut AG)
+    where
+        A: From<(RawPeak, FH)> + Send + Sync + Clone + Copy,
+        AG: Aggregator<Item = A, Output = O>,
+    {
+        self.apply_on_query(fragment_query, &mut |x, y| aggregator.add((x, y)));
     }
 
-    fn add_query_multi_group<O, AG: crate::Aggregator<Item = (RawPeak, FH), Output = O>>(
+    fn add_query_multi_group<A, O, AG>(
         &self,
         fragment_queries: &[FragmentGroupIndexQuery<FH>],
         aggregator: &mut [AG],
-    ) {
+    ) where
+        A: From<(RawPeak, FH)> + Send + Sync + Clone + Copy,
+        AG: Aggregator<Item = A, Output = O>,
+    {
         fragment_queries
             .iter()
             .zip(aggregator.iter_mut())

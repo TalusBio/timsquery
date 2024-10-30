@@ -672,7 +672,6 @@ impl ExpandedQuadSliceInfo {
             }
 
             for peak in local_peaks.into_iter() {
-                println!("peak: {:?}", peak);
                 if peak.fwdone && peak.bwdone && peak.any_update {
                     peaks.push(peak);
                 }

@@ -36,3 +36,4 @@ sequential, use that).
 ##  TODO:
 
 - Add logging levels to instrumentations.
+- Add missing_docks_in_private_items to clippy.

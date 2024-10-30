@@ -11,6 +11,7 @@ use crate::models::frames::single_quad_settings::{
     SingleQuadrupoleSettingIndex,
 };
 use crate::models::queries::FragmentGroupIndexQuery;
+use crate::traits::aggregator::Aggregator;
 use crate::traits::queriable_data::QueriableData;
 use crate::ToleranceAdapter;
 use rayon::prelude::*;
@@ -207,11 +208,11 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
         //     .collect()
     }
 
-    fn add_query<O, AG: crate::Aggregator<Item = (RawPeak, FH), Output = O>>(
-        &self,
-        fragment_query: &FragmentGroupIndexQuery<FH>,
-        aggregator: &mut AG,
-    ) {
+    fn add_query<A, O, AG>(&self, fragment_query: &FragmentGroupIndexQuery<FH>, aggregator: &mut AG)
+    where
+        A: From<(RawPeak, FH)> + Send + Sync + Clone + Copy,
+        AG: Aggregator<Item = A, Output = O>,
+    {
         todo!();
         // let precursor_mz_range = (
         //     fragment_query.precursor_query.isolation_mz_range.0 as f64,
@@ -236,11 +237,14 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
         //     })
     }
 
-    fn add_query_multi_group<O, AG: crate::Aggregator<Item = (RawPeak, FH), Output = O>>(
+    fn add_query_multi_group<A, O, AG>(
         &self,
         fragment_queries: &[FragmentGroupIndexQuery<FH>],
         aggregator: &mut [AG],
-    ) {
+    ) where
+        A: From<(RawPeak, FH)> + Send + Sync + Clone + Copy,
+        AG: Aggregator<Item = A, Output = O>,
+    {
         // fragment_queries
         //     .par_iter()
         //     .zip(aggregator.par_iter_mut())
@@ -321,7 +325,7 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
                 }
 
                 for (fh, tof_range) in fragment_queries[i].mz_index_ranges.iter() {
-                    let mut local_lambda = |peak| agg.add(&(RawPeak::from(peak), *fh));
+                    let mut local_lambda = |peak| agg.add((RawPeak::from(peak), *fh));
                     tqi.query_peaks(
                         *tof_range,
                         scan_ranges[i],

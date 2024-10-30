@@ -11,13 +11,12 @@ use timsquery::{
         ChromatomobilogramStats, ExtractedIonChromatomobilogram, MultiCMGStatsFactory,
         RawPeakIntensityAggregator, RawPeakVectorAggregator,
     },
-    models::indices::raw_file_index::RawFileIndex,
-    models::indices::transposed_quad_index::QuadSplittedTransposedIndex,
+    models::indices::{ExpandedRawFrameIndex, QuadSplittedTransposedIndex},
 };
 use tracing::instrument;
 use tracing::subscriber::set_global_default;
 use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
-use tracing_subscriber::{fmt, prelude::*, registry::Registry, EnvFilter, Layer};
+use tracing_subscriber::{prelude::*, registry::Registry, EnvFilter};
 
 fn main() {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
@@ -113,13 +112,14 @@ fn main_query_index(args: QueryIndexArgs) {
         serde_json::from_str(&std::fs::read_to_string(&elution_groups_path).unwrap()).unwrap();
 
     let index_use = match (index_use, elution_groups.len() > 10) {
-        (PossibleIndex::RawFileIndex, true) => PossibleIndex::RawFileIndex,
+        (PossibleIndex::ExpandedRawFrameIndex, true) => PossibleIndex::ExpandedRawFrameIndex,
         (PossibleIndex::TransposedQuadIndex, true) => PossibleIndex::TransposedQuadIndex,
-        (PossibleIndex::RawFileIndex, false) => PossibleIndex::RawFileIndex,
+        (PossibleIndex::ExpandedRawFrameIndex, false) => PossibleIndex::ExpandedRawFrameIndex,
         (PossibleIndex::TransposedQuadIndex, false) => PossibleIndex::TransposedQuadIndex,
         (PossibleIndex::Unspecified, true) => PossibleIndex::TransposedQuadIndex,
-        (PossibleIndex::Unspecified, false) => PossibleIndex::RawFileIndex,
+        (PossibleIndex::Unspecified, false) => PossibleIndex::ExpandedRawFrameIndex,
     };
+    // ExpandedRawFrameIndex,
 
     execute_query(
         index_use,
@@ -162,7 +162,7 @@ pub enum PossibleAggregator {
 pub enum PossibleIndex {
     #[default]
     Unspecified,
-    RawFileIndex,
+    ExpandedRawFrameIndex,
     TransposedQuadIndex,
 }
 
@@ -242,7 +242,7 @@ pub fn execute_query(
 
     macro_rules! execute_query_inner {
         ($index:expr, $agg:expr) => {
-            let tmp = query_multi_group(&$index, &$index, &tolerance, &elution_groups, &$agg);
+            let tmp = query_multi_group(&$index, &tolerance, &elution_groups, &$agg);
 
             let mut out = Vec::with_capacity(tmp.len());
             for (res, eg) in tmp.into_iter().zip(elution_groups) {
@@ -316,8 +316,8 @@ pub fn execute_query(
                 }
             }
         }
-        (PossibleIndex::RawFileIndex, aggregator) => {
-            let index = RawFileIndex::from_path(&(raw_file_path.clone())).unwrap();
+        (PossibleIndex::ExpandedRawFrameIndex, aggregator) => {
+            let index = ExpandedRawFrameIndex::from_path(&(raw_file_path.clone())).unwrap();
             match aggregator {
                 PossibleAggregator::RawPeakIntensityAggregator => {
                     let aggregator = RawPeakIntensityAggregator::new;
@@ -336,7 +336,11 @@ pub fn execute_query(
                     execute_query_inner!(index, aggregator);
                 }
                 PossibleAggregator::MultiCMGStats => {
-                    panic!("Not Implemented!");
+                    let factory = MultiCMGStatsFactory {
+                        converters: (index.mz_converter, index.im_converter),
+                        _phantom: std::marker::PhantomData::<usize>,
+                    };
+                    execute_query_inner!(index, |x| factory.build(x));
                 }
             }
         }

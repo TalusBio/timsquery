@@ -30,7 +30,8 @@ impl Aggregator for ExtractedIonChromatomobilogram {
     type Item = RawPeak;
     type Output = ChromatomobilogramVectorArrayTuples;
 
-    fn add(&mut self, peak: &RawPeak) {
+    fn add(&mut self, peak: impl Into<RawPeak>) {
+        let peak = peak.into();
         let u64_intensity = peak.intensity as u64;
 
         // In theory I could use a power of 2 to have a better preservation of
@@ -170,7 +171,8 @@ impl Aggregator for ChromatomobilogramStats {
     type Item = RawPeak;
     type Output = ChromatomobilogramStatsArrays;
 
-    fn add(&mut self, peak: &RawPeak) {
+    fn add(&mut self, peak: impl Into<RawPeak>) {
+        let peak = peak.into();
         let u64_intensity = peak.intensity as u64;
         let rt_miliseconds = (peak.retention_time * 1000.0) as u32;
 

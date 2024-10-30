@@ -19,11 +19,12 @@ impl<T: Send + Sync> RawPeakIntensityAggregator<T> {
     }
 }
 
-impl<T: Send + Sync> Aggregator for RawPeakIntensityAggregator<T> {
+impl<T: Send + Sync + Clone> Aggregator for RawPeakIntensityAggregator<T> {
     type Item = (RawPeak, T);
     type Output = u64;
 
-    fn add(&mut self, peak: &(RawPeak, T)) {
+    fn add(&mut self, peak: impl Into<(RawPeak, T)>) {
+        let peak = peak.into();
         self.intensity += peak.0.intensity as u64;
     }
 
@@ -70,7 +71,8 @@ impl Aggregator for RawPeakVectorAggregator {
     type Item = RawPeak;
     type Output = RawPeakVectorArrays;
 
-    fn add(&mut self, peak: &RawPeak) {
+    fn add(&mut self, peak: impl Into<RawPeak>) {
+        let peak = peak.into();
         self.peaks.scans.push(peak.scan_index);
         self.peaks.tofs.push(peak.tof_index);
         self.peaks.intensities.push(peak.intensity);

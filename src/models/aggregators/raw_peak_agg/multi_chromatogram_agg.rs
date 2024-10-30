@@ -346,8 +346,8 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> Aggregator for MultiCMGSta
     type Item = (RawPeak, FH);
     type Output = NaturalFinalizedMultiCMGStatsArrays<FH>;
 
-    fn add(&mut self, peak: &(RawPeak, FH)) {
-        let (peak, transition) = peak;
+    fn add(&mut self, peak: impl Into<(RawPeak, FH)>) {
+        let (peak, transition) = peak.into();
         let u64_intensity = peak.intensity as u64;
         let rt_miliseconds = (peak.retention_time * 1000.0) as u32;
 
