@@ -32,3 +32,7 @@ sequential, use that).
 
 ## What does the cli look like right now?
 
+
+##  TODO:
+
+- Add logging levels to instrumentations.

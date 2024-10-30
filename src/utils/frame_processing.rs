@@ -132,9 +132,11 @@ pub fn lazy_centroid_weighted_frame<'a>(
 
         let mut curr_intensity = 0u64;
         let mut curr_weight = 0u64;
-        let mut curr_agg_tof = 0u64;
-        let mut curr_agg_ims = 0u64;
+        // let mut curr_agg_tof = 0u64;
+        // let mut curr_agg_ims = 0u64;
 
+        // This is added to the index within the loop
+        // To get the touched status of the peaks.
         let mut local_offset_touched = 0;
         for (ii, local_peak_refs) in peak_refs.iter().enumerate() {
             let ss_start = local_peak_refs
@@ -152,8 +154,8 @@ pub fn lazy_centroid_weighted_frame<'a>(
                         curr_intensity += local_intensity;
                         global_num_touched += 1;
                     }
-                    curr_agg_tof += local_peak_refs.tof_array[i] as u64 * local_intensity;
-                    curr_agg_ims += local_peak_refs.ims_array[i] as u64 * local_intensity;
+                    // curr_agg_tof += local_peak_refs.tof_array[i] as u64 * local_intensity;
+                    // curr_agg_ims += local_peak_refs.ims_array[i] as u64 * local_intensity;
                     curr_weight += local_intensity;
                     touched[ti] = true;
                 }
@@ -164,8 +166,10 @@ pub fn lazy_centroid_weighted_frame<'a>(
         // This means that at least 2 peaks need to be aggregated.
         if curr_weight > this_intensity && curr_intensity >= this_intensity {
             agg_intensity.push(u32::try_from(curr_intensity).expect("Expected to fit in u32"));
-            let calc_tof = (curr_agg_tof / curr_weight) as u32;
-            let calc_ims = (curr_agg_ims / curr_weight) as usize;
+            // let calc_tof = (curr_agg_tof / curr_weight) as u32;
+            // let calc_ims = (curr_agg_ims / curr_weight) as usize;
+            let calc_tof = tof;
+            let calc_ims = ims;
             debug_assert!(tof_range.contains(&calc_tof));
             debug_assert!(ims_range.contains(&calc_ims));
             agg_tof.push(calc_tof);

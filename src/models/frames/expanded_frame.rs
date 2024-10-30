@@ -458,7 +458,6 @@ pub fn par_read_and_expand_frames(
         .collect();
 
     println!("Slice info: {:?}", slice_infos);
-    panic!();
 
     info!("Processing MS1 frames");
     let ms1_iter = frame_reader.parallel_filter(|x| x.ms_level == MSLevel::MS1);
