@@ -5,6 +5,7 @@ use crate::models::frames::peak_in_quad::PeakInQuad;
 use crate::models::frames::single_quad_settings::SingleQuadrupoleSetting;
 use crate::sort_vecs_by_first;
 use crate::utils::display::{glimpse_vec, GlimpseConfig};
+use crate::utils::tolerance_ranges::IncludedRange;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
 use std::time::Instant;
@@ -72,12 +73,12 @@ impl Display for TransposedQuadIndex {
 impl TransposedQuadIndex {
     pub fn query_peaks(
         &self,
-        tof_range: (u32, u32),
-        scan_range: Option<(usize, usize)>,
-        rt_range: Option<(f32, f32)>,
+        tof_range: IncludedRange<u32>,
+        scan_range: Option<IncludedRange<usize>>,
+        rt_range: Option<IncludedRange<f32>>,
     ) -> impl Iterator<Item = PeakInQuad> + '_ {
         self.peak_buckets
-            .range(tof_range.0..tof_range.1)
+            .range(tof_range.start()..=tof_range.end())
             .flat_map(move |(tof_index, pb)| {
                 pb.query_peaks(scan_range, rt_range)
                     .map(move |p| PeakInQuad::from_peak_in_bucket(p, *tof_index))

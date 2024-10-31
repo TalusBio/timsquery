@@ -1,5 +1,5 @@
 use crate::models::frames::raw_peak::RawPeak;
-use crate::traits::aggregator::Aggregator;
+use crate::traits::aggregator::{Aggregator, NoContext, ProvidesContext};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy)]
@@ -20,12 +20,13 @@ impl<T: Send + Sync> RawPeakIntensityAggregator<T> {
 }
 
 impl<T: Send + Sync + Clone> Aggregator for RawPeakIntensityAggregator<T> {
-    type Item = (RawPeak, T);
+    type Item = RawPeak;
+    type Context = NoContext;
     type Output = u64;
 
-    fn add(&mut self, peak: impl Into<(RawPeak, T)>) {
+    fn add(&mut self, peak: impl Into<RawPeak>) {
         let peak = peak.into();
-        self.intensity += peak.0.intensity as u64;
+        self.intensity += peak.intensity as u64;
     }
 
     fn finalize(self) -> u64 {
@@ -69,6 +70,7 @@ pub struct RawPeakVectorArrays {
 
 impl Aggregator for RawPeakVectorAggregator {
     type Item = RawPeak;
+    type Context = NoContext;
     type Output = RawPeakVectorArrays;
 
     fn add(&mut self, peak: impl Into<RawPeak>) {

@@ -7,68 +7,6 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Serialize)]
-pub struct ExtractedIonChromatomobilogram {
-    pub rt_tree: BTreeMap<u32, u64>,
-    pub scan_tree: BTreeMap<usize, u64>,
-    pub tof_tree: BTreeMap<u32, u64>,
-    pub id: u64,
-}
-
-impl ExtractedIonChromatomobilogram {
-    pub fn new(id: u64) -> Self {
-        Self {
-            rt_tree: BTreeMap::new(),
-            scan_tree: BTreeMap::new(),
-            tof_tree: BTreeMap::new(),
-            id,
-        }
-    }
-}
-
-impl Aggregator for ExtractedIonChromatomobilogram {
-    type Item = RawPeak;
-    type Output = ChromatomobilogramVectorArrayTuples;
-
-    fn add(&mut self, peak: impl Into<RawPeak>) {
-        let peak = peak.into();
-        let u64_intensity = peak.intensity as u64;
-
-        // In theory I could use a power of 2 to have a better preservation of
-        // the precision.
-        // TODO make this macro ... right now it feels very repetitive.
-        let rt_miliseconds = (peak.retention_time * 1000.0) as u32;
-
-        self.rt_tree
-            .entry(rt_miliseconds)
-            .and_modify(|curr| *curr += u64_intensity)
-            .or_insert(u64_intensity);
-
-        self.scan_tree
-            .entry(peak.scan_index)
-            .and_modify(|curr| *curr += u64_intensity)
-            .or_insert(u64_intensity);
-
-        self.tof_tree
-            .entry(peak.tof_index)
-            .and_modify(|curr| *curr += u64_intensity)
-            .or_insert(u64_intensity);
-    }
-
-    fn finalize(self) -> ChromatomobilogramVectorArrayTuples {
-        ChromatomobilogramVectorArrayTuples {
-            scan_indices: self.scan_tree.into_iter().collect(),
-            tof_indices: self.tof_tree.into_iter().collect(),
-            retention_times: self
-                .rt_tree
-                .into_iter()
-                .map(|(k, v)| ((k as f32) / 1000.0, v))
-                .collect(),
-        }
-    }
-}
-
-// type MappingCollection<T1, T2> = BTreeMap<T1, T2>;
 pub type MappingCollection<T1, T2> = HashMap<T1, T2>;
 
 #[derive(Debug, Clone)]
@@ -129,14 +67,7 @@ pub struct ChromatomobilogramStatsArrays {
 impl ChromatomobilogramStatsArrays {
     // TODO use default instead of new everywhere ..
     pub fn new() -> Self {
-        Self {
-            retention_time_miliseconds: Vec::new(),
-            tof_index_means: Vec::new(),
-            tof_index_sds: Vec::new(),
-            scan_index_means: Vec::new(),
-            scan_index_sds: Vec::new(),
-            intensities: Vec::new(),
-        }
+        Self::default()
     }
 
     pub fn fold(&mut self, other: Self) {
@@ -164,64 +95,6 @@ impl ChromatomobilogramStatsArrays {
         self.scan_index_means = x.3;
         self.scan_index_sds = x.4;
         self.intensities = x.5;
-    }
-}
-
-impl Aggregator for ChromatomobilogramStats {
-    type Item = RawPeak;
-    type Output = ChromatomobilogramStatsArrays;
-
-    fn add(&mut self, peak: impl Into<RawPeak>) {
-        let peak = peak.into();
-        let u64_intensity = peak.intensity as u64;
-        let rt_miliseconds = (peak.retention_time * 1000.0) as u32;
-
-        self.scan_tof_mapping
-            .entry(rt_miliseconds)
-            .and_modify(|curr| {
-                curr.add(u64_intensity, peak.scan_index, peak.tof_index);
-            })
-            .or_insert(ScanTofStatsCalculatorPair::new(
-                u64_intensity,
-                peak.scan_index,
-                peak.tof_index,
-            ));
-    }
-
-    fn finalize(self) -> ChromatomobilogramStatsArrays {
-        type VecTuple = (Vec<f64>, Vec<f64>);
-        type OutVecTubples = ((VecTuple, VecTuple), Vec<u64>);
-        let ((scan_data, tof_data), intensities): OutVecTubples = self
-            .scan_tof_mapping
-            .values()
-            .map(|pair| {
-                (
-                    (
-                        (
-                            pair.scan.mean().unwrap(),
-                            pair.scan.standard_deviation().unwrap(),
-                        ),
-                        (
-                            pair.tof.mean().unwrap(),
-                            pair.tof.standard_deviation().unwrap(),
-                        ),
-                    ),
-                    pair.tof.weight(),
-                )
-            })
-            .unzip();
-
-        let (scan_means, scan_sds) = scan_data;
-        let (tof_means, tof_sds) = tof_data;
-
-        ChromatomobilogramStatsArrays {
-            retention_time_miliseconds: self.scan_tof_mapping.keys().cloned().collect::<Vec<u32>>(),
-            tof_index_means: tof_means,
-            tof_index_sds: tof_sds,
-            scan_index_means: scan_means,
-            scan_index_sds: scan_sds,
-            intensities,
-        }
     }
 }
 

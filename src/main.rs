@@ -138,6 +138,8 @@ fn template_tolerance_settings() -> DefaultTolerance {
         rt: RtTolerance::None,
         mobility: MobilityTolerance::Pct((20.0, 20.0)),
         quad: QuadTolerance::Absolute((0.1, 0.1, 1)),
+        num_ms1_isotopes: 3,
+        num_ms2_isotopes: 1,
     }
 }
 

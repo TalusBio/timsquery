@@ -1,12 +1,13 @@
 use timsrust::{Frame, QuadrupoleSettings};
 
 use super::raw_peak::RawPeak;
+use crate::utils::tolerance_ranges::IncludedRange;
 use tracing::trace;
 
 pub fn scans_matching_quad(
     quad_settings: &QuadrupoleSettings,
-    quad_range: (f64, f64),
-) -> Option<(usize, usize)> {
+    quad_range: IncludedRange<f64>,
+) -> Option<IncludedRange<usize>> {
     let mut min_start = usize::MAX;
     let mut max_end = 0;
 
@@ -15,7 +16,7 @@ pub fn scans_matching_quad(
         let quad_start = quad_settings.isolation_mz[i] - half_width;
         let quad_end = quad_settings.isolation_mz[i] + half_width;
 
-        if quad_start <= quad_range.1 && quad_end >= quad_range.0 {
+        if quad_start <= quad_range.end() && quad_end >= quad_range.start() {
             let start = quad_settings.scan_starts[i];
             let end = quad_settings.scan_ends[i];
             min_start = min_start.min(start);
@@ -26,15 +27,15 @@ pub fn scans_matching_quad(
     if min_start == usize::MAX {
         None
     } else {
-        Some((min_start, max_end))
+        Some((min_start, max_end).into())
     }
 }
 
 pub fn frame_elems_matching(
     frame: &Frame,
-    tof_range: (u32, u32),
-    scan_range: (usize, usize),
-    quad_range: Option<(f64, f64)>,
+    tof_range: IncludedRange<u32>,
+    scan_range: IncludedRange<usize>,
+    quad_range: Option<IncludedRange<f64>>,
 ) -> impl Iterator<Item = RawPeak> + '_ {
     trace!(
         "frame_elems_matching tof_range: {:?}, scan_range: {:?}, quad_range: {:?}",
@@ -52,11 +53,11 @@ pub fn frame_elems_matching(
 
         // Only checkinghere bc its common for them to get flipped
         // bc skill issues. (and the highest scan is actually the lowest 1/k0)
-        let min_scan = scan_range.0.min(scan_range.1);
-        let max_scan = scan_range.0.max(scan_range.1);
+        let min_scan = scan_range.start();
+        let max_scan = scan_range.end();
 
-        let min_quad_scan = quad_scan_range.0.min(quad_scan_range.1);
-        let max_quad_scan = quad_scan_range.0.max(quad_scan_range.1);
+        let min_quad_scan = quad_scan_range.start();
+        let max_quad_scan = quad_scan_range.end();
 
         let (scan_ind_start, scan_ind_end): (usize, usize) =
             (min_quad_scan.max(min_scan), max_quad_scan.min(max_scan));
@@ -83,7 +84,7 @@ pub fn frame_elems_matching(
 
                 (tof_ind, intensity, scan_index)
             })
-            .filter(|(tof_ind, _, _)| *tof_ind >= tof_range.0 && *tof_ind < tof_range.1)
+            .filter(|(tof_ind, _, _)| *tof_ind >= tof_range.start() && *tof_ind < tof_range.end())
             .map(|(tof_ind, intensity, scan_index)| RawPeak {
                 scan_index,
                 tof_index: tof_ind,

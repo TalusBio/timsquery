@@ -13,6 +13,7 @@ use crate::models::frames::single_quad_settings::{
 use crate::models::queries::FragmentGroupIndexQuery;
 use crate::traits::aggregator::Aggregator;
 use crate::traits::queriable_data::QueriableData;
+use crate::utils::tolerance_ranges::IncludedRange;
 use crate::ToleranceAdapter;
 use rayon::prelude::*;
 use serde::Serialize;
@@ -52,21 +53,21 @@ impl ExpandedSliceBundle {
 
     pub fn query_peaks<F>(
         &self,
-        tof_range: (u32, u32),
-        scan_range: Option<(usize, usize)>,
-        frame_index_range: (usize, usize),
+        tof_range: IncludedRange<u32>,
+        scan_range: Option<IncludedRange<usize>>,
+        frame_index_range: IncludedRange<usize>,
         f: &mut F,
     ) where
         F: FnMut(PeakInQuad),
     {
         // Binary search the rt if needed.
         let frame_indices = self.frame_indices.as_slice();
-        let low = frame_indices.partition_point(|x| x < &frame_index_range.0);
-        let high = frame_indices.partition_point(|x| x <= &frame_index_range.1);
+        let low = frame_indices.partition_point(|x| *x < frame_index_range.start());
+        let high = frame_indices.partition_point(|x| *x <= frame_index_range.end());
 
         for i in low..high {
             let slice = &self.slices[i];
-            slice.query_peaks(tof_range, scan_range, f);
+            slice.query_peaks(tof_range.clone(), scan_range.clone(), f);
         }
     }
 }
@@ -74,10 +75,10 @@ impl ExpandedSliceBundle {
 impl ExpandedRawFrameIndex {
     pub fn query_peaks<F>(
         &self,
-        tof_range: (u32, u32),
-        precursor_mz_range: (f64, f64),
-        scan_range: Option<(usize, usize)>,
-        frame_index_range: (usize, usize),
+        tof_range: IncludedRange<u32>,
+        precursor_mz_range: IncludedRange<f64>,
+        scan_range: Option<IncludedRange<usize>>,
+        frame_index_range: IncludedRange<usize>,
         f: &mut F,
     ) where
         F: FnMut(PeakInQuad),
@@ -91,9 +92,9 @@ impl ExpandedRawFrameIndex {
     fn query_precursor_peaks<F>(
         &self,
         matching_quads: &[SingleQuadrupoleSettingIndex],
-        tof_range: (u32, u32),
-        scan_range: Option<(usize, usize)>,
-        frame_index_range: (usize, usize),
+        tof_range: IncludedRange<u32>,
+        scan_range: Option<IncludedRange<usize>>,
+        frame_index_range: IncludedRange<usize>,
         f: &mut F,
     ) where
         F: FnMut(PeakInQuad),
@@ -169,7 +170,7 @@ impl ExpandedRawFrameIndex {
 }
 
 impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
-    QueriableData<FragmentGroupIndexQuery<FH>, (RawPeak, FH)> for ExpandedRawFrameIndex
+    QueriableData<FragmentGroupIndexQuery<FH>, RawPeak, FH> for ExpandedRawFrameIndex
 {
     fn query(&self, fragment_query: &FragmentGroupIndexQuery<FH>) -> Vec<(RawPeak, FH)> {
         todo!();
@@ -234,8 +235,8 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
         fragment_queries: &[FragmentGroupIndexQuery<FH>],
         aggregator: &mut [AG],
     ) where
-        A: From<(RawPeak, FH)> + Send + Sync + Clone + Copy,
-        AG: Aggregator<Item = A, Output = O>,
+        A: From<PeakInQuad> + Send + Sync + Clone + Copy,
+        AG: Aggregator<Item = A, Output = O, Context = FH>,
     {
         // fragment_queries
         //     .par_iter()
@@ -271,9 +272,10 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
             .iter()
             .map(|x| {
                 (
-                    x.precursor_query.isolation_mz_range.0 as f64,
-                    x.precursor_query.isolation_mz_range.0 as f64,
+                    x.precursor_query.isolation_mz_range.start() as f64,
+                    x.precursor_query.isolation_mz_range.end() as f64,
                 )
+                    .into()
             })
             .collect::<Vec<_>>();
 
@@ -317,12 +319,13 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
                 }
 
                 for (fh, tof_range) in fragment_queries[i].mz_index_ranges.iter() {
-                    let mut local_lambda = |peak| agg.add((RawPeak::from(peak), *fh));
+                    agg.set_context(*fh);
+                    // let mut local_lambda = |peak| agg.add((RawPeak::from(peak), *fh));
                     tqi.query_peaks(
                         *tof_range,
                         scan_ranges[i],
                         frame_index_ranges[i],
-                        &mut local_lambda,
+                        &mut |x| agg.add(x),
                     );
                 }
             });

@@ -3,6 +3,8 @@ use std::hash::Hash;
 
 use timsrust::QuadrupoleSettings;
 
+use crate::utils::tolerance_ranges::IncludedRange;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SingleQuadrupoleSettingIndex {
     pub major_index: usize,
@@ -128,8 +130,8 @@ pub fn expand_quad_settings(quad_settings: &QuadrupoleSettings) -> ExpandedFrame
 
 pub fn get_matching_quad_settings(
     flat_quad_settings: &[SingleQuadrupoleSetting],
-    precursor_mz_range: (f64, f64),
-    scan_range: Option<(usize, usize)>,
+    precursor_mz_range: IncludedRange<f64>,
+    scan_range: Option<IncludedRange<usize>>,
 ) -> impl Iterator<Item = SingleQuadrupoleSettingIndex> + '_ {
     flat_quad_settings
         .iter()
@@ -139,16 +141,23 @@ pub fn get_matching_quad_settings(
         .map(|e| e.index)
 }
 
-fn matches_iso_window(qs: &SingleQuadrupoleSetting, precursor_mz_range: (f64, f64)) -> bool {
-    (qs.ranges.isolation_low <= precursor_mz_range.1)
-        && (qs.ranges.isolation_high >= precursor_mz_range.0)
+fn matches_iso_window(
+    qs: &SingleQuadrupoleSetting,
+    precursor_mz_range: IncludedRange<f64>,
+) -> bool {
+    (qs.ranges.isolation_low <= precursor_mz_range.end())
+        && (qs.ranges.isolation_high >= precursor_mz_range.start())
 }
 
-fn matches_scan_range(qs: &SingleQuadrupoleSetting, scan_range: Option<(usize, usize)>) -> bool {
+fn matches_scan_range(
+    qs: &SingleQuadrupoleSetting,
+    scan_range: Option<IncludedRange<usize>>,
+) -> bool {
     match scan_range {
-        Some((min_scan, max_scan)) => {
+        Some(tmp_range) => {
+            let min_scan = tmp_range.start();
+            let max_scan = tmp_range.end();
             assert!(qs.ranges.scan_start <= qs.ranges.scan_end);
-            assert!(min_scan <= max_scan);
 
             // Above quad
             // Quad                   [----------]
@@ -173,8 +182,8 @@ fn matches_scan_range(qs: &SingleQuadrupoleSetting, scan_range: Option<(usize, u
 
 pub fn matches_quad_settings(
     a: &SingleQuadrupoleSetting,
-    precursor_mz_range: (f64, f64),
-    scan_range: Option<(usize, usize)>,
+    precursor_mz_range: IncludedRange<f64>,
+    scan_range: Option<IncludedRange<usize>>,
 ) -> bool {
     matches_iso_window(a, precursor_mz_range) && matches_scan_range(a, scan_range)
 }

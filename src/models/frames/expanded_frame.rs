@@ -7,6 +7,7 @@ use crate::sort_vecs_by_first;
 use crate::utils::compress_explode::explode_vec;
 use crate::utils::frame_processing::{lazy_centroid_weighted_frame, PeakArrayRefs};
 use crate::utils::sorting::top_n;
+use crate::utils::tolerance_ranges::IncludedRange;
 use crate::utils::tolerance_ranges::{scan_tol_range, tof_tol_range};
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -108,26 +109,27 @@ impl<T: SortingStateTrait> ExpandedFrameSlice<T> {
 impl ExpandedFrameSlice<SortedState> {
     pub fn query_peaks<F>(
         &self,
-        tof_range: (u32, u32),
-        scan_range: Option<(usize, usize)>,
+        tof_range: IncludedRange<u32>,
+        scan_range: Option<IncludedRange<usize>>,
         f: &mut F,
     ) where
         F: FnMut(PeakInQuad),
     {
+        // TODO abstract this operation... Range -> Range
         let peak_range = {
-            let peak_ind_start = self.tof_indices.partition_point(|x| x < &tof_range.0);
-            let peak_ind_end = self.tof_indices.partition_point(|x| x <= &tof_range.1);
-            peak_ind_start..peak_ind_end
+            let peak_ind_start = self.tof_indices.partition_point(|x| *x < tof_range.start());
+            let peak_ind_end = self.tof_indices.partition_point(|x| *x <= tof_range.end());
+            peak_ind_start..=peak_ind_end
         };
 
-        if let Some((min_scan, max_scan)) = scan_range {
-            assert!(min_scan <= max_scan);
-        }
+        // if let Some(scan_range) = scan_range {
+        //     assert!(scan_range.start() <= scan_range.end());
+        // }
 
         for peak_ind in peak_range {
             let scan_index = self.scan_numbers[peak_ind];
-            if let Some((min_scan, max_scan)) = scan_range {
-                if scan_index < min_scan || scan_index > max_scan {
+            if let Some(scan_range) = &scan_range {
+                if !scan_range.contains(scan_index) {
                     continue;
                 }
             }
@@ -548,7 +550,7 @@ impl ExpandedQuadSliceInfo {
                 .iter()
                 .map(|tof| {
                     let mut local_inten = 0u32;
-                    local_frame.query_peaks((tof - 1, tof + 1), None, &mut |x| {
+                    local_frame.query_peaks(IncludedRange::new(tof - 1, tof + 1), None, &mut |x| {
                         local_inten += x.intensity
                     });
                     assert!(local_inten > 0);
@@ -575,9 +577,11 @@ impl ExpandedQuadSliceInfo {
                         continue;
                     }
                     let mut local_int = 0u32;
-                    lookup_frame.query_peaks((peak.tof - 1, peak.tof + 1), None, &mut |x| {
-                        local_int += x.intensity
-                    });
+                    lookup_frame.query_peaks(
+                        IncludedRange::new(peak.tof - 1, peak.tof + 1),
+                        None,
+                        &mut |x| local_int += x.intensity,
+                    );
                     if local_int > (peak.intensity / 100) {
                         peak.max_rt = local_rt;
                         peak.patience = 1;
@@ -612,9 +616,11 @@ impl ExpandedQuadSliceInfo {
                         continue;
                     }
                     let mut local_int = 0;
-                    lookup_frame.query_peaks((peak.tof - 1, peak.tof + 1), None, &mut |x| {
-                        local_int += x.intensity
-                    });
+                    lookup_frame.query_peaks(
+                        IncludedRange::new(peak.tof - 1, peak.tof + 1),
+                        None,
+                        &mut |x| local_int += x.intensity,
+                    );
 
                     if local_int > (peak.intensity / 100) {
                         peak.min_rt = local_rt;

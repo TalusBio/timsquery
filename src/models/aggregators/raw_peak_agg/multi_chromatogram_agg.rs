@@ -342,12 +342,16 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> From<MultiCMGStatsArrays<F
     }
 }
 
-impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> Aggregator for MultiCMGStats<FH> {
-    type Item = (RawPeak, FH);
+impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug> Aggregator
+    for MultiCMGStats<FH>
+{
+    type Item = RawPeak;
+    type Context = FH;
     type Output = NaturalFinalizedMultiCMGStatsArrays<FH>;
 
-    fn add(&mut self, peak: impl Into<(RawPeak, FH)>) {
-        let (peak, transition) = peak.into();
+    fn add(&mut self, peak: impl Into<Self::Item>) {
+        let peak = peak.into();
+        let transition = self.get_context();
         let u64_intensity = peak.intensity as u64;
         let rt_miliseconds = (peak.retention_time * 1000.0) as u32;
 

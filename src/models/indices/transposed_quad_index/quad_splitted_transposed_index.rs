@@ -14,6 +14,7 @@ use crate::models::queries::FragmentGroupIndexQuery;
 use crate::traits::aggregator::Aggregator;
 use crate::traits::queriable_data::QueriableData;
 use crate::utils::display::{glimpse_vec, GlimpseConfig};
+use crate::utils::tolerance_ranges::IncludedRange;
 use crate::ToleranceAdapter;
 use rayon::prelude::*;
 use serde::Serialize;
@@ -53,10 +54,10 @@ impl Debug for QuadSplittedTransposedIndex {
 impl QuadSplittedTransposedIndex {
     pub fn query_peaks<F>(
         &self,
-        tof_range: (u32, u32),
-        precursor_mz_range: (f64, f64),
-        scan_range: Option<(usize, usize)>,
-        rt_range_seconds: Option<(f32, f32)>,
+        tof_range: IncludedRange<u32>,
+        precursor_mz_range: IncludedRange<f64>,
+        scan_range: Option<IncludedRange<usize>>,
+        rt_range_seconds: Option<IncludedRange<f32>>,
         f: &mut F,
     ) where
         F: FnMut(PeakInQuad),
@@ -71,9 +72,9 @@ impl QuadSplittedTransposedIndex {
     fn query_precursor_peaks<F>(
         &self,
         matching_quads: &[SingleQuadrupoleSettingIndex],
-        tof_range: (u32, u32),
-        scan_range: Option<(usize, usize)>,
-        rt_range_seconds: Option<(f32, f32)>,
+        tof_range: IncludedRange<u32>,
+        scan_range: Option<IncludedRange<usize>>,
+        rt_range_seconds: Option<IncludedRange<f32>>,
         f: &mut F,
     ) where
         F: FnMut(PeakInQuad),
@@ -90,8 +91,8 @@ impl QuadSplittedTransposedIndex {
 
     fn get_matching_quad_settings(
         &self,
-        precursor_mz_range: (f64, f64),
-        scan_range: Option<(usize, usize)>,
+        precursor_mz_range: IncludedRange<f64>,
+        scan_range: Option<IncludedRange<usize>>,
     ) -> impl Iterator<Item = SingleQuadrupoleSettingIndex> + '_ {
         get_matching_quad_settings(&self.flat_quad_settings, precursor_mz_range, scan_range)
     }
@@ -305,7 +306,7 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
     QueriableData<FragmentGroupIndexQuery<FH>, (RawPeak, FH)> for QuadSplittedTransposedIndex
 {
     fn query(&self, fragment_query: &FragmentGroupIndexQuery<FH>) -> Vec<(RawPeak, FH)> {
-        let precursor_mz_range = (
+        let precursor_mz_range = IncludedRange::new(
             fragment_query.precursor_query.isolation_mz_range.0 as f64,
             fragment_query.precursor_query.isolation_mz_range.0 as f64,
         );
@@ -334,7 +335,7 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
         A: From<(RawPeak, FH)> + Send + Sync + Clone + Copy,
         AG: Aggregator<Item = A, Output = O>,
     {
-        let precursor_mz_range = (
+        let precursor_mz_range = IncludedRange::new(
             fragment_query.precursor_query.isolation_mz_range.0 as f64,
             fragment_query.precursor_query.isolation_mz_range.0 as f64,
         );
@@ -366,12 +367,12 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
             .par_iter()
             .zip(aggregator.par_iter_mut())
             .for_each(|(fragment_query, agg)| {
-                let precursor_mz_range = (
-                    fragment_query.precursor_query.isolation_mz_range.0 as f64,
-                    fragment_query.precursor_query.isolation_mz_range.1 as f64,
+                let precursor_mz_range = fragment_query.precursor_query.isolation_mz_range;
+                let precursor_mz_range = IncludedRange::new(
+                    precursor_mz_range.start() as f64,
+                    precursor_mz_range.end() as f64,
                 );
-                assert!(precursor_mz_range.0 <= precursor_mz_range.1);
-                assert!(precursor_mz_range.0 > 0.0);
+                assert!(precursor_mz_range.start() > 0.0);
                 let scan_range = Some(fragment_query.precursor_query.mobility_index_range);
 
                 let local_quad_vec: Vec<SingleQuadrupoleSettingIndex> = self
