@@ -1,9 +1,9 @@
 use super::quad_index::{TransposedQuadIndex, TransposedQuadIndexBuilder};
+use crate::errors::Result;
 use crate::models::adapters::FragmentIndexAdapter;
 use crate::models::elution_group::ElutionGroup;
 use crate::models::frames::expanded_frame::{
-    par_read_and_expand_frames, DataReadingError, ExpandedFrameSlice, FrameProcessingConfig,
-    SortingStateTrait,
+    par_read_and_expand_frames, ExpandedFrameSlice, FrameProcessingConfig, SortingStateTrait,
 };
 use crate::models::frames::peak_in_quad::PeakInQuad;
 use crate::models::frames::raw_peak::RawPeak;
@@ -22,10 +22,9 @@ use std::fmt::Debug;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::time::Instant;
-use timsrust::converters::{Frame2RtConverter, Scan2ImConverter, Tof2MzConverter};
+use timsrust::converters::{Scan2ImConverter, Tof2MzConverter};
 use timsrust::readers::{FrameReader, MetadataReader};
 use timsrust::Metadata;
-use timsrust::TimsRustError;
 use tracing::instrument;
 use tracing::{debug, info, trace};
 
@@ -36,7 +35,6 @@ pub struct QuadSplittedTransposedIndex {
     precursor_index: TransposedQuadIndex,
     fragment_indices: HashMap<SingleQuadrupoleSettingIndex, TransposedQuadIndex>,
     flat_quad_settings: Vec<SingleQuadrupoleSetting>,
-    rt_converter: Frame2RtConverter,
     pub mz_converter: Tof2MzConverter,
     pub im_converter: Scan2ImConverter,
     adapter: FragmentIndexAdapter,
@@ -104,7 +102,6 @@ impl Display for QuadSplittedTransposedIndex {
         let mut disp_str = String::new();
         disp_str.push_str("QuadSplittedTransposedIndex\n");
 
-        disp_str.push_str("rt_converter: ... not showing ...\n");
         disp_str.push_str(&format!("mz_converter: {:?}\n", self.mz_converter));
         disp_str.push_str(&format!("im_converter: {:?}\n", self.im_converter));
         disp_str.push_str("flat_quad_settings: \n");
@@ -139,7 +136,7 @@ impl Display for QuadSplittedTransposedIndex {
 
 impl QuadSplittedTransposedIndex {
     #[instrument(name = "QuadSplittedTransposedIndex::from_path")]
-    pub fn from_path(path: &str) -> Result<Self, DataReadingError> {
+    pub fn from_path(path: &str) -> Result<Self> {
         let st = Instant::now();
         info!("Building transposed quad index from path {}", path);
         let tmp = QuadSplittedTransposedIndexBuilder::from_path(path)?;
@@ -151,7 +148,7 @@ impl QuadSplittedTransposedIndex {
     }
 
     #[instrument(name = "QuadSplittedTransposedIndex::from_path_centroided")]
-    pub fn from_path_centroided(path: &str) -> Result<Self, DataReadingError> {
+    pub fn from_path_centroided(path: &str) -> Result<Self> {
         let st = Instant::now();
         info!(
             "Building CENTROIDED transposed quad index from path {}",
@@ -169,7 +166,6 @@ impl QuadSplittedTransposedIndex {
 #[derive(Debug, Clone, Default)]
 pub struct QuadSplittedTransposedIndexBuilder {
     indices: HashMap<Option<SingleQuadrupoleSetting>, TransposedQuadIndexBuilder>,
-    rt_converter: Option<Frame2RtConverter>,
     mz_converter: Option<Tof2MzConverter>,
     im_converter: Option<Scan2ImConverter>,
     metadata: Option<Metadata>,
@@ -200,12 +196,12 @@ impl QuadSplittedTransposedIndexBuilder {
     }
 
     #[instrument(name = "QuadSplittedTransposedIndexBuilder::from_path")]
-    fn from_path(path: &str) -> Result<Self, DataReadingError> {
+    fn from_path(path: &str) -> Result<Self> {
         Self::from_path_base(path, FrameProcessingConfig::NotCentroided)
     }
 
     #[instrument(name = "QuadSplittedTransposedIndexBuilder::from_path_centroided")]
-    fn from_path_centroided(path: &str) -> Result<Self, DataReadingError> {
+    fn from_path_centroided(path: &str) -> Result<Self> {
         let config = FrameProcessingConfig::default_centroided();
         Self::from_path_base(path, config)
     }
@@ -214,10 +210,7 @@ impl QuadSplittedTransposedIndexBuilder {
     // and one that adds the frameslices, maybe even have a config struct that dispatches
     // the right preprocessing steps.
     #[instrument(name = "QuadSplittedTransposedIndexBuilder::from_path_base")]
-    fn from_path_base(
-        path: &str,
-        centroid_config: FrameProcessingConfig,
-    ) -> Result<Self, DataReadingError> {
+    fn from_path_base(path: &str, centroid_config: FrameProcessingConfig) -> Result<Self> {
         let file_reader = FrameReader::new(path)?;
 
         let sql_path = std::path::Path::new(path).join("analysis.tdf");
@@ -226,7 +219,6 @@ impl QuadSplittedTransposedIndexBuilder {
         let out_meta_converters = meta_converters.clone();
         let mut final_out = Self {
             indices: HashMap::new(),
-            rt_converter: Some(meta_converters.rt_converter),
             mz_converter: Some(meta_converters.mz_converter),
             im_converter: Some(meta_converters.im_converter),
             metadata: Some(out_meta_converters),
@@ -239,7 +231,7 @@ impl QuadSplittedTransposedIndexBuilder {
         let split_frames = par_read_and_expand_frames(&file_reader, centroid_config)?;
 
         // TODO use the rayon contructor to fold
-        let out2: Result<Vec<Self>, TimsRustError> = split_frames
+        let out2: Result<Vec<Self>> = split_frames
             .into_par_iter()
             .map(|(q, frameslices)| {
                 // TODO:Refactor so the internal index is built first and then added.
@@ -302,7 +294,6 @@ impl QuadSplittedTransposedIndexBuilder {
             precursor_index: precursor_index.expect("Precursor peaks should be present"),
             fragment_indices: indices,
             flat_quad_settings,
-            rt_converter: self.rt_converter.unwrap(),
             mz_converter: self.mz_converter.unwrap(),
             im_converter: self.im_converter.unwrap(),
             adapter: FragmentIndexAdapter::from(self.metadata.unwrap()),

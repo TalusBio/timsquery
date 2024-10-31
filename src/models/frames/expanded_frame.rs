@@ -1,23 +1,20 @@
+use super::peak_in_quad::PeakInQuad;
 use super::single_quad_settings::{
     expand_quad_settings, ExpandedFrameQuadSettings, SingleQuadrupoleSetting,
 };
-use rayon::prelude::*;
-use std::collections::HashMap;
-use std::marker::PhantomData;
-use std::sync::Arc;
-use timsrust::converters::{Scan2ImConverter, Tof2MzConverter};
-use timsrust::{AcquisitionType, Frame, MSLevel, QuadrupoleSettings};
-
-use super::peak_in_quad::PeakInQuad;
+use crate::errors::{Result, UnsupportedDataError};
 use crate::sort_vecs_by_first;
 use crate::utils::compress_explode::explode_vec;
 use crate::utils::frame_processing::{lazy_centroid_weighted_frame, PeakArrayRefs};
 use crate::utils::sorting::top_n;
 use crate::utils::tolerance_ranges::{scan_tol_range, tof_tol_range};
-use timsrust::{
-    readers::{FrameReader, FrameReaderError, MetadataReaderError},
-    TimsRustError,
-};
+use rayon::prelude::*;
+use std::collections::HashMap;
+use std::marker::PhantomData;
+use std::sync::Arc;
+use timsrust::converters::{Scan2ImConverter, Tof2MzConverter};
+use timsrust::readers::{FrameReader, FrameReaderError};
+use timsrust::{AcquisitionType, Frame, MSLevel, QuadrupoleSettings};
 use tracing::instrument;
 use tracing::{info, trace, warn};
 
@@ -302,13 +299,30 @@ pub fn par_expand_and_arrange_frames(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CentroidingSettings {
+    ims_tol_pct: f64,
+    mz_tol_ppm: f64,
+    window_width: usize,
+    max_ms1_peaks: usize,
+    max_ms2_peaks: usize,
+}
+
+impl Default for CentroidingSettings {
+    fn default() -> Self {
+        CentroidingSettings {
+            ims_tol_pct: 1.5,
+            mz_tol_ppm: 15.0,
+            window_width: 3,
+            max_ms1_peaks: 100_000,
+            max_ms2_peaks: 20_000,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FrameProcessingConfig {
     Centroided {
-        ims_tol_pct: f64,
-        mz_tol_ppm: f64,
-        window_width: usize,
-        max_ms1_peaks: usize,
-        max_ms2_peaks: usize,
+        settings: CentroidingSettings,
         ims_converter: Option<Scan2ImConverter>,
         mz_converter: Option<Tof2MzConverter>,
     },
@@ -322,33 +336,20 @@ impl FrameProcessingConfig {
         mz_converter: Tof2MzConverter,
     ) -> Self {
         match self {
-            FrameProcessingConfig::Centroided {
-                ims_tol_pct,
-                mz_tol_ppm,
-                window_width,
-                max_ms1_peaks,
-                max_ms2_peaks,
-                ..
-            } => FrameProcessingConfig::Centroided {
-                ims_tol_pct,
-                mz_tol_ppm,
-                window_width,
-                max_ms1_peaks,
-                max_ms2_peaks,
-                ims_converter: Some(ims_converter),
-                mz_converter: Some(mz_converter),
-            },
+            FrameProcessingConfig::Centroided { settings, .. } => {
+                FrameProcessingConfig::Centroided {
+                    settings,
+                    ims_converter: Some(ims_converter),
+                    mz_converter: Some(mz_converter),
+                }
+            }
             FrameProcessingConfig::NotCentroided => FrameProcessingConfig::NotCentroided,
         }
     }
 
     pub fn default_centroided() -> Self {
         FrameProcessingConfig::Centroided {
-            ims_tol_pct: 1.5,
-            mz_tol_ppm: 15.0,
-            window_width: 3,
-            max_ms1_peaks: 100_000,
-            max_ms2_peaks: 20_000,
+            settings: Default::default(),
             ims_converter: Default::default(),
             mz_converter: Default::default(),
         }
@@ -359,33 +360,8 @@ impl FrameProcessingConfig {
     }
 }
 
-#[derive(Debug)]
-pub enum DataReadingError {
-    CentroidingError(FrameProcessingConfig),
-    UnsupportedDataError(String),
-    TimsRustError(TimsRustError), // Why doesnt timsrust error derive clone?
-}
-
-impl From<TimsRustError> for DataReadingError {
-    fn from(e: TimsRustError) -> Self {
-        DataReadingError::TimsRustError(e)
-    }
-}
-
-impl From<MetadataReaderError> for DataReadingError {
-    fn from(e: MetadataReaderError) -> Self {
-        DataReadingError::TimsRustError(TimsRustError::MetadataReaderError(e))
-    }
-}
-
-impl From<FrameReaderError> for DataReadingError {
-    fn from(e: FrameReaderError) -> Self {
-        DataReadingError::TimsRustError(TimsRustError::FrameReaderError(e))
-    }
-}
-
 fn warn_and_skip_badframes(
-    frame_iter: impl ParallelIterator<Item = Result<Frame, FrameReaderError>>,
+    frame_iter: impl ParallelIterator<Item = std::result::Result<Frame, FrameReaderError>>,
 ) -> impl ParallelIterator<Item = Frame> {
     frame_iter.filter_map(|x| {
         // Log the info of the frame that broke ...
@@ -409,16 +385,11 @@ fn warn_and_skip_badframes(
 pub fn par_read_and_expand_frames(
     frame_reader: &FrameReader,
     centroiding_config: FrameProcessingConfig,
-) -> Result<
-    HashMap<Option<SingleQuadrupoleSetting>, Vec<ExpandedFrameSlice<SortedState>>>,
-    DataReadingError,
-> {
+) -> Result<HashMap<Option<SingleQuadrupoleSetting>, Vec<ExpandedFrameSlice<SortedState>>>> {
     let dia_windows = match frame_reader.get_dia_windows() {
         Some(dia_windows) => dia_windows,
         None => {
-            return Err(DataReadingError::UnsupportedDataError(
-                "No dia windows found".to_string(),
-            ))
+            return Err(UnsupportedDataError::NoMS2DataError.into());
         }
     };
 
@@ -430,19 +401,15 @@ pub fn par_read_and_expand_frames(
 
         let expanded_frames = match centroiding_config {
             FrameProcessingConfig::Centroided {
-                ims_tol_pct,
-                mz_tol_ppm,
-                window_width,
-                max_ms1_peaks: _max_ms1_peaks,
-                max_ms2_peaks,
+                settings,
                 ims_converter,
                 mz_converter,
             } => par_expand_and_centroid_frames(
                 curr_iter,
-                ims_tol_pct,
-                mz_tol_ppm,
-                window_width,
-                max_ms2_peaks,
+                settings.ims_tol_pct,
+                settings.mz_tol_ppm,
+                settings.window_width,
+                settings.max_ms2_peaks,
                 &ims_converter.unwrap(),
                 &mz_converter.unwrap(),
             ),
@@ -464,19 +431,15 @@ pub fn par_read_and_expand_frames(
     let ms1_iter = warn_and_skip_badframes(ms1_iter);
     let expanded_ms1_frames = match centroiding_config {
         FrameProcessingConfig::Centroided {
-            ims_tol_pct,
-            mz_tol_ppm,
-            window_width,
-            max_ms1_peaks,
-            max_ms2_peaks: _max_ms2_peaks,
+            settings,
             ims_converter,
             mz_converter,
         } => par_expand_and_centroid_frames(
             ms1_iter,
-            ims_tol_pct,
-            mz_tol_ppm,
-            window_width,
-            max_ms1_peaks,
+            settings.ims_tol_pct,
+            settings.mz_tol_ppm,
+            settings.window_width,
+            settings.max_ms1_peaks,
             &ims_converter.unwrap(),
             &mz_converter.unwrap(),
         ),

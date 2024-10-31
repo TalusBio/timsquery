@@ -1,8 +1,8 @@
+use crate::errors::Result;
 use crate::models::adapters::FragmentIndexAdapter;
 use crate::models::elution_group::ElutionGroup;
 use crate::models::frames::expanded_frame::{
-    par_read_and_expand_frames, DataReadingError, ExpandedFrameSlice, FrameProcessingConfig,
-    SortedState,
+    par_read_and_expand_frames, ExpandedFrameSlice, FrameProcessingConfig, SortedState,
 };
 use crate::models::frames::peak_in_quad::PeakInQuad;
 use crate::models::frames::raw_peak::RawPeak;
@@ -19,7 +19,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::time::Instant;
-use timsrust::converters::{Frame2RtConverter, Scan2ImConverter, Tof2MzConverter};
+use timsrust::converters::{Scan2ImConverter, Tof2MzConverter};
 use timsrust::readers::{FrameReader, MetadataReader};
 use tracing::info;
 use tracing::instrument;
@@ -29,7 +29,6 @@ pub struct ExpandedRawFrameIndex {
     bundled_ms1_frames: ExpandedSliceBundle,
     bundled_frames: HashMap<SingleQuadrupoleSettingIndex, ExpandedSliceBundle>,
     flat_quad_settings: Vec<SingleQuadrupoleSetting>,
-    rt_converter: Frame2RtConverter,
     pub mz_converter: Tof2MzConverter,
     pub im_converter: Scan2ImConverter,
     adapter: FragmentIndexAdapter,
@@ -38,18 +37,15 @@ pub struct ExpandedRawFrameIndex {
 #[derive(Debug, Clone)]
 pub struct ExpandedSliceBundle {
     slices: Vec<ExpandedFrameSlice<SortedState>>,
-    rts: Vec<f64>,
     frame_indices: Vec<usize>,
 }
 
 impl ExpandedSliceBundle {
     pub fn new(mut slices: Vec<ExpandedFrameSlice<SortedState>>) -> Self {
         slices.sort_unstable_by(|a, b| a.rt.partial_cmp(&b.rt).unwrap());
-        let rts = slices.iter().map(|x| x.rt).collect();
         let frame_indices = slices.iter().map(|x| x.frame_index).collect();
         Self {
             slices,
-            rts,
             frame_indices,
         }
     }
@@ -113,21 +109,18 @@ impl ExpandedRawFrameIndex {
     }
 
     #[instrument(name = "ExpandedRawFrameIndex::from_path_centroided")]
-    pub fn from_path_centroided(path: &str) -> Result<Self, DataReadingError> {
+    pub fn from_path_centroided(path: &str) -> Result<Self> {
         let config = FrameProcessingConfig::default_centroided();
         Self::from_path_base(path, config)
     }
 
     #[instrument(name = "ExpandedRawFrameIndex::from_path")]
-    pub fn from_path(path: &str) -> Result<Self, DataReadingError> {
+    pub fn from_path(path: &str) -> Result<Self> {
         Self::from_path_base(path, FrameProcessingConfig::NotCentroided)
     }
 
     #[instrument(name = "ExpandedRawFrameIndex::from_path_base")]
-    pub fn from_path_base(
-        path: &str,
-        centroid_config: FrameProcessingConfig,
-    ) -> Result<Self, DataReadingError> {
+    pub fn from_path_base(path: &str, centroid_config: FrameProcessingConfig) -> Result<Self> {
         info!(
             "Building ExpandedRawFrameIndex from path {} config {:?}",
             path, centroid_config,
@@ -166,7 +159,6 @@ impl ExpandedRawFrameIndex {
             bundled_ms1_frames: out_ms1_frames.expect("At least one ms1 frame should be present"),
             bundled_frames: out_ms2_frames,
             flat_quad_settings,
-            rt_converter: meta_converters.rt_converter,
             mz_converter: meta_converters.mz_converter,
             im_converter: meta_converters.im_converter,
             adapter,

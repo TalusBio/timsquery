@@ -83,46 +83,6 @@ impl TransposedQuadIndex {
                     .map(move |p| PeakInQuad::from_peak_in_bucket(p, *tof_index))
             })
     }
-
-    fn convert_to_local_frame_range(
-        &self,
-        rt_range: Option<FrameRTTolerance>,
-    ) -> Option<(f32, f32)> {
-        // TODO consider if I should allow only RT here, since it would in theory
-        // force me to to the repreatable work beforehand.
-        let frame_index_range = match rt_range {
-            Some(FrameRTTolerance::Seconds((rt_low, rt_high))) => {
-                Some((rt_low as f32, rt_high as f32))
-            }
-            Some(FrameRTTolerance::FrameIndex((frame_low, frame_high))) => {
-                let frame_id_start = self
-                    .frame_indices
-                    .binary_search_by(|x| x.cmp(&frame_low))
-                    .unwrap_or_else(|x| x);
-
-                let frame_id_end = self
-                    .frame_indices
-                    .binary_search_by(|x| x.cmp(&frame_high))
-                    .unwrap_or_else(|x| x);
-
-                // TODO consider throwing a warning if we are
-                // out of bounds here.
-                Some((
-                    self.frame_rts[frame_id_start.min(self.frame_rts.len() - 1)] as f32,
-                    self.frame_rts[frame_id_end.min(self.frame_rts.len() - 1)] as f32,
-                ))
-            }
-            None => None,
-        };
-
-        if cfg!(debug_assertions) {
-            if let Some((low, high)) = frame_index_range {
-                debug_assert!(low <= high);
-            }
-        }
-
-        frame_index_range
-    }
 }
 
 impl PeakInQuad {
