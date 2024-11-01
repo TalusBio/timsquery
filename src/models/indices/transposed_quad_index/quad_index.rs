@@ -162,6 +162,7 @@ impl TransposedQuadIndexBuilder {
             num_frames = %self.frame_indices.len(),
             quad_settings = format!("{:?}", self.quad_settings),
         )
+        level = "debug",
     )]
     pub fn build(self) -> TransposedQuadIndex {
         // TODO: Refactor this function, its getting pretty large.
@@ -249,7 +250,8 @@ impl TransposedQuadIndexBuilder {
             num_frames = %self.frame_indices.len(),
             quad_settings = format!("{:?}", self.quad_settings),
             peak_buckets = %peak_buckets.len(),
-        )
+        ),
+        level = "debug",
     )]
     fn build_inner_ref(
         self,
@@ -317,7 +319,8 @@ impl TransposedQuadIndexBuilder {
             num_frames = %self.frame_indices.len(),
             quad_settings = format!("{:?}", self.quad_settings),
             peak_buckets = %peak_buckets.len(),
-        )
+        ),
+        level = "debug",
     )]
     fn batched_build_inner(
         self,

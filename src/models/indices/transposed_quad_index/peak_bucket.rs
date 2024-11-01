@@ -224,8 +224,8 @@ impl PeakBucket {
         rt_range: Option<IncludedRange<f32>>,
     ) -> impl Iterator<Item = PeakInBucket> + '_ {
         let scan_range = match scan_range {
-            Some(x) => x.start()..=x.end().min(self.scan_offsets.len() - 1),
-            None => 0..=(self.scan_offsets.len() - 1),
+            Some(x) => x.start()..x.end().min(self.scan_offsets.len() - 1),
+            None => 0..(self.scan_offsets.len() - 1),
         };
         scan_range
             .flat_map(move |scan_index| {

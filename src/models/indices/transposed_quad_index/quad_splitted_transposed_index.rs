@@ -277,7 +277,7 @@ impl QuadSplittedTransposedIndexBuilder {
         self.added_peaks += other.added_peaks;
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self), level = "debug")]
     pub fn build(self) -> QuadSplittedTransposedIndex {
         let mut indices = HashMap::new();
         let mut flat_quad_settings = Vec::new();
@@ -393,7 +393,6 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
                 );
                 assert!(precursor_mz_range.start() > 0.0);
                 let scan_range = Some(fragment_query.precursor_query.mobility_index_range);
-
                 let local_quad_vec: Vec<SingleQuadrupoleSettingIndex> = self
                     .get_matching_quad_settings(precursor_mz_range, scan_range)
                     .collect();

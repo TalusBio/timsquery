@@ -457,7 +457,7 @@ pub struct ExpandedQuadSliceInfo {
 }
 
 impl ExpandedQuadSliceInfo {
-    #[instrument(skip(frameslices), ret)]
+    #[instrument(skip(frameslices), ret, level = "debug")]
     pub fn new(frameslices: &[ExpandedFrameSlice<SortedState>]) -> Self {
         let avg_cycle_time = frameslices
             .windows(2)
