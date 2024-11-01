@@ -22,9 +22,7 @@ pub trait Aggregator: Send + Sync {
 
     fn add(&mut self, item: impl Into<Self::Item>);
     fn finalize(self) -> Self::Output;
-    fn supports_context(&self) -> bool {
-        false
-    }
+    fn supports_context(&self) -> bool;
     fn set_context(&mut self, context: Self::Context) {
         panic!(
             "Misconfigured aggregator, context not supported, got {:?}",
@@ -48,9 +46,8 @@ pub trait ProvidesContext {
 }
 
 /// Dummy type to denote that no context is provided.
+///
+/// Felt more semantically correct to make a type rather
+/// than passing `()` to the context.
 #[derive(Debug, Clone, Copy)]
-pub enum NoContext {}
-
-impl<T: Send + Sync> ProvidesContext for T {
-    type Context = NoContext;
-}
+pub struct NoContext {}

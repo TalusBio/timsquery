@@ -326,12 +326,16 @@ fn run_batch_access_benchmark(raw_file_path: &Path, env_config: EnvConfig) -> Ve
         rt: RtTolerance::Absolute((5.0, 5.0)),
         mobility: MobilityTolerance::Pct((3.0, 3.0)),
         quad: QuadTolerance::Absolute((0.1, 0.1, 1)),
+        num_ms1_isotopes: 3,
+        num_ms2_isotopes: 1,
     };
     let tolerance_with_nort = DefaultTolerance {
         ms: MzToleramce::Ppm((20.0, 20.0)),
         rt: RtTolerance::None,
         mobility: MobilityTolerance::Pct((3.0, 3.0)),
         quad: QuadTolerance::Absolute((0.1, 0.1, 1)),
+        num_ms1_isotopes: 3,
+        num_ms2_isotopes: 1,
     };
     let tolerances = [
         (tolerance_with_rt, "narrow_rt"),

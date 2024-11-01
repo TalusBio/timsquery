@@ -119,12 +119,8 @@ impl ExpandedFrameSlice<SortedState> {
         let peak_range = {
             let peak_ind_start = self.tof_indices.partition_point(|x| *x < tof_range.start());
             let peak_ind_end = self.tof_indices.partition_point(|x| *x <= tof_range.end());
-            peak_ind_start..=peak_ind_end
+            peak_ind_start..peak_ind_end
         };
-
-        // if let Some(scan_range) = scan_range {
-        //     assert!(scan_range.start() <= scan_range.end());
-        // }
 
         for peak_ind in peak_range {
             let scan_index = self.scan_numbers[peak_ind];

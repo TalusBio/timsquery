@@ -4,6 +4,7 @@ use super::chromatogram_agg::{
 use crate::models::aggregators::rolling_calculators::rolling_median;
 use crate::models::aggregators::streaming_aggregator::RunningStatsCalculator;
 use crate::models::frames::raw_peak::RawPeak;
+use crate::models::queries::MsLevelContext;
 use crate::traits::aggregator::Aggregator;
 use crate::utils::math::{lnfact, lnfact_float};
 use serde::Serialize;
@@ -14,12 +15,62 @@ use tracing::{debug, warn};
 use timsrust::converters::{ConvertableDomain, Scan2ImConverter, Tof2MzConverter};
 
 #[derive(Debug, Clone)]
-pub struct MultiCMGStats<FH: Clone + Eq + Serialize + Hash + Send + Sync> {
+struct _MultiCMGStats<FH: Clone + Eq + Serialize + Hash + Send + Sync> {
     pub scan_tof_mapping: MappingCollection<(FH, u32), ScanTofStatsCalculatorPair>,
-    pub converters: (Tof2MzConverter, Scan2ImConverter),
     pub uniq_rts: HashSet<u32>,
     pub uniq_ids: HashSet<FH>,
+}
+
+impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> Default for _MultiCMGStats<FH> {
+    fn default() -> Self {
+        Self {
+            scan_tof_mapping: MappingCollection::new(),
+            uniq_rts: HashSet::new(),
+            uniq_ids: HashSet::new(),
+        }
+    }
+}
+
+impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> _MultiCMGStats<FH> {
+    fn finalize(self) -> MultiCMGStatsArrays<FH> {
+        let mut transition_stats = MappingCollection::new();
+
+        for id_key in self.uniq_ids.iter() {
+            let mut id_cmgs = ChromatomobilogramStatsArrays::new();
+            for rt_key in self.uniq_rts.iter() {
+                let scan_tof_mapping = self.scan_tof_mapping.get(&(id_key.clone(), *rt_key));
+                if let Some(scan_tof_mapping) = scan_tof_mapping {
+                    id_cmgs.retention_time_miliseconds.push(*rt_key);
+                    id_cmgs
+                        .scan_index_means
+                        .push(scan_tof_mapping.scan.mean().unwrap());
+                    id_cmgs
+                        .scan_index_sds
+                        .push(scan_tof_mapping.scan.standard_deviation().unwrap());
+                    id_cmgs
+                        .tof_index_means
+                        .push(scan_tof_mapping.tof.mean().unwrap());
+                    id_cmgs
+                        .tof_index_sds
+                        .push(scan_tof_mapping.tof.standard_deviation().unwrap());
+                    id_cmgs.intensities.push(scan_tof_mapping.tof.weight());
+                }
+            }
+            id_cmgs.sort_by_rt();
+            transition_stats.insert(id_key.clone(), id_cmgs);
+        }
+
+        MultiCMGStatsArrays { transition_stats }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MultiCMGStats<FH: Clone + Eq + Serialize + Hash + Send + Sync> {
+    pub converters: (Tof2MzConverter, Scan2ImConverter),
+    pub ms1_stats: _MultiCMGStats<usize>,
+    pub ms2_stats: _MultiCMGStats<FH>,
     pub id: u64,
+    pub context: Option<MsLevelContext<usize, FH>>,
 }
 
 #[derive(Debug, Clone)]
@@ -31,11 +82,11 @@ pub struct MultiCMGStatsFactory<FH: Clone + Eq + Serialize + Hash + Send + Sync>
 impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> MultiCMGStatsFactory<FH> {
     pub fn build(&self, id: u64) -> MultiCMGStats<FH> {
         MultiCMGStats {
-            scan_tof_mapping: MappingCollection::new(),
             converters: (self.converters.0, self.converters.1),
-            uniq_rts: HashSet::new(),
-            uniq_ids: HashSet::new(),
+            ms1_stats: Default::default(),
+            ms2_stats: Default::default(),
             id,
+            context: None,
         }
     }
 }
@@ -43,11 +94,10 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> MultiCMGStatsFactory<FH> {
 #[derive(Debug, Clone, Serialize)]
 pub struct MultiCMGStatsArrays<FH: Clone + Eq + Serialize + Hash + Send + Sync> {
     pub transition_stats: MappingCollection<FH, ChromatomobilogramStatsArrays>,
-    id: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct FinalizedMultiCMGStatsArrays<FH: Clone + Eq + Serialize + Hash + Send + Sync> {
+pub struct _FinalizedMultiCMGStatsArrays<FH: Clone + Eq + Serialize + Hash + Send + Sync> {
     pub retention_time_miliseconds: Vec<u32>,
     pub weighted_scan_index_mean: Vec<f64>,
     pub summed_intensity: Vec<u64>,
@@ -60,12 +110,18 @@ pub struct FinalizedMultiCMGStatsArrays<FH: Clone + Eq + Serialize + Hash + Send
     // TODO consider if I want to add the standard deviations ... RN they dont
     // seem to be that useful.
     pub intensities: MappingCollection<FH, Vec<u64>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FinalizedMultiCMGStatsArrays<FH: Clone + Eq + Serialize + Hash + Send + Sync> {
+    pub ms1_stats: _FinalizedMultiCMGStatsArrays<usize>,
+    pub ms2_stats: _FinalizedMultiCMGStatsArrays<FH>,
     pub id: u64,
 }
 
 // This name is starting to get really long ...
 #[derive(Debug, Clone, Serialize)]
-pub struct NaturalFinalizedMultiCMGStatsArrays<FH: Clone + Eq + Serialize + Hash + Send + Sync> {
+pub struct _NaturalFinalizedMultiCMGStatsArrays<FH: Clone + Eq + Serialize + Hash + Send + Sync> {
     pub retention_time_miliseconds: Vec<u32>,
     pub average_mobility: Vec<f64>,
     pub summed_intensity: Vec<u64>,
@@ -80,27 +136,14 @@ pub struct NaturalFinalizedMultiCMGStatsArrays<FH: Clone + Eq + Serialize + Hash
     pub transition_mzs: MappingCollection<FH, Vec<f64>>,
     pub transition_intensities: MappingCollection<FH, Vec<u64>>,
     pub apex_primary_score_index: usize,
-    pub id: u64,
 }
 
-// Reference python code
-
-// log1p_intensitties = np.log1p(arrays["summed_intensity"])
-//     lazy_hyperscore = LN_FACTORIALS[arrays["npeaks"]] + (2 * log1p_intensitties)
-//
-//     five_pct_len = int(len(arrays["retention_time_miliseconds"]) / 100) * 5
-//     lazy_hyperscore_roll_median = (
-//         pd.Series(lazy_hyperscore).rolling(window=five_pct_len, center=True).median()
-// ).array
-//     hyperscore_off_baseline = lazy_hyperscore - lazy_hyperscore_roll_median
-//     hyperscore_off_baseline = np.nan_to_num(hyperscore_off_baseline, 0)
-//         iqr_hyperscore_off_baseline = np.percentile(
-//             hyperscore_off_baseline, 75
-//     ) - np.percentile(hyperscore_off_baseline, 25)
-//
-//     scaled_hyperscore_off_baseline = hyperscore_off_baseline / iqr_hyperscore_off_baseline
-//     )
-// )
+#[derive(Debug, Clone, Serialize)]
+pub struct NaturalFinalizedMultiCMGStatsArrays<FH: Clone + Eq + Serialize + Hash + Send + Sync> {
+    pub ms1_stats: _NaturalFinalizedMultiCMGStatsArrays<usize>,
+    pub ms2_stats: _NaturalFinalizedMultiCMGStatsArrays<FH>,
+    pub id: u64,
+}
 
 fn calculate_lazy_hyperscore(npeaks: &[usize], summed_intensity: &[u64]) -> Vec<f64> {
     let mut scores = vec![0.0; npeaks.len()];
@@ -121,9 +164,9 @@ fn calculate_value_vs_baseline(vals: &[f64], baseline_window_size: usize) -> Vec
         .collect()
 }
 
-impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> NaturalFinalizedMultiCMGStatsArrays<FH> {
+impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> _NaturalFinalizedMultiCMGStatsArrays<FH> {
     pub fn new(
-        other: FinalizedMultiCMGStatsArrays<FH>,
+        other: _FinalizedMultiCMGStatsArrays<FH>,
         mz_converter: &Tof2MzConverter,
         mobility_converter: &Scan2ImConverter,
     ) -> Self {
@@ -185,7 +228,7 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> NaturalFinalizedMultiCMGSt
             "Failed sanity check"
         );
 
-        NaturalFinalizedMultiCMGStatsArrays {
+        _NaturalFinalizedMultiCMGStatsArrays {
             retention_time_miliseconds: other.retention_time_miliseconds,
             average_mobility: other
                 .weighted_scan_index_mean
@@ -227,18 +270,17 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> NaturalFinalizedMultiCMGSt
             lazyerscore_vs_baseline,
             norm_hyperscore_vs_baseline,
             norm_lazyerscore_vs_baseline,
-            id: other.id,
         }
     }
 }
 
 impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> From<MultiCMGStatsArrays<FH>>
-    for FinalizedMultiCMGStatsArrays<FH>
+    for _FinalizedMultiCMGStatsArrays<FH>
 {
     fn from(other: MultiCMGStatsArrays<FH>) -> Self {
         // TODO ... maybe refactor this ... RN its king of ugly.
 
-        let mut out = FinalizedMultiCMGStatsArrays {
+        let mut out = _FinalizedMultiCMGStatsArrays {
             retention_time_miliseconds: Vec::new(),
             scan_index_means: MappingCollection::new(),
             tof_index_means: MappingCollection::new(),
@@ -247,7 +289,6 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> From<MultiCMGStatsArrays<F
             summed_intensity: Vec::new(),
             log_intensity_products: Vec::new(),
             npeaks: Vec::new(),
-            id: other.id,
         };
 
         let unique_rts = other
@@ -346,67 +387,89 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug> Aggregat
     for MultiCMGStats<FH>
 {
     type Item = RawPeak;
-    type Context = FH;
+    type Context = MsLevelContext<usize, FH>;
     type Output = NaturalFinalizedMultiCMGStatsArrays<FH>;
 
     fn add(&mut self, peak: impl Into<Self::Item>) {
         let peak = peak.into();
-        let transition = self.get_context();
         let u64_intensity = peak.intensity as u64;
         let rt_miliseconds = (peak.retention_time * 1000.0) as u32;
 
-        self.uniq_rts.insert(rt_miliseconds);
-        self.uniq_ids.insert(transition.clone());
+        match self.get_context() {
+            MsLevelContext::MS1(i) => {
+                self.ms1_stats.uniq_rts.insert(rt_miliseconds);
+                self.ms1_stats
+                    .scan_tof_mapping
+                    .entry((i, rt_miliseconds))
+                    .and_modify(|curr| {
+                        curr.add(u64_intensity, peak.scan_index, peak.tof_index);
+                    })
+                    .or_insert(ScanTofStatsCalculatorPair::new(
+                        u64_intensity,
+                        peak.scan_index,
+                        peak.tof_index,
+                    ));
+            }
+            MsLevelContext::MS2(i) => {
+                self.ms2_stats.uniq_rts.insert(rt_miliseconds);
+                self.ms2_stats
+                    .scan_tof_mapping
+                    .entry((i, rt_miliseconds))
+                    .and_modify(|curr| {
+                        curr.add(u64_intensity, peak.scan_index, peak.tof_index);
+                    })
+                    .or_insert(ScanTofStatsCalculatorPair::new(
+                        u64_intensity,
+                        peak.scan_index,
+                        peak.tof_index,
+                    ));
+            }
+        }
+    }
 
-        self.scan_tof_mapping
-            .entry((transition.clone(), rt_miliseconds))
-            .and_modify(|curr| {
-                curr.add(u64_intensity, peak.scan_index, peak.tof_index);
-            })
-            .or_insert(ScanTofStatsCalculatorPair::new(
-                u64_intensity,
-                peak.scan_index,
-                peak.tof_index,
-            ));
+    fn set_context(&mut self, context: Self::Context) {
+        match &context {
+            MsLevelContext::MS1(i) => {
+                self.ms1_stats.uniq_ids.insert(*i);
+            }
+            MsLevelContext::MS2(i) => {
+                self.ms2_stats.uniq_ids.insert(i.clone());
+            }
+        }
+        self.context = Some(context);
+    }
+
+    fn supports_context(&self) -> bool {
+        true
+    }
+
+    fn get_context(&self) -> Self::Context {
+        match &self.context {
+            Some(context) => context.clone(),
+            None => panic!("No context set"),
+        }
     }
 
     fn finalize(self) -> NaturalFinalizedMultiCMGStatsArrays<FH> {
-        let mut transition_stats = MappingCollection::new();
+        let mz_converter = &self.converters.0;
+        let mobility_converter = &self.converters.1;
 
-        for id_key in self.uniq_ids.iter() {
-            let mut id_cmgs = ChromatomobilogramStatsArrays::new();
-            for rt_key in self.uniq_rts.iter() {
-                let scan_tof_mapping = self.scan_tof_mapping.get(&(id_key.clone(), *rt_key));
-                if let Some(scan_tof_mapping) = scan_tof_mapping {
-                    id_cmgs.retention_time_miliseconds.push(*rt_key);
-                    id_cmgs
-                        .scan_index_means
-                        .push(scan_tof_mapping.scan.mean().unwrap());
-                    id_cmgs
-                        .scan_index_sds
-                        .push(scan_tof_mapping.scan.standard_deviation().unwrap());
-                    id_cmgs
-                        .tof_index_means
-                        .push(scan_tof_mapping.tof.mean().unwrap());
-                    id_cmgs
-                        .tof_index_sds
-                        .push(scan_tof_mapping.tof.standard_deviation().unwrap());
-                    id_cmgs.intensities.push(scan_tof_mapping.tof.weight());
-                }
-            }
-            id_cmgs.sort_by_rt();
-            transition_stats.insert(id_key.clone(), id_cmgs);
-        }
+        let ms1_stats = _NaturalFinalizedMultiCMGStatsArrays::new(
+            _FinalizedMultiCMGStatsArrays::from(self.ms1_stats.finalize()),
+            mz_converter,
+            mobility_converter,
+        );
+        let ms2_stats = _NaturalFinalizedMultiCMGStatsArrays::new(
+            _FinalizedMultiCMGStatsArrays::from(self.ms2_stats.finalize()),
+            mz_converter,
+            mobility_converter,
+        );
 
-        let tmp = MultiCMGStatsArrays {
-            transition_stats,
+        NaturalFinalizedMultiCMGStatsArrays {
+            ms2_stats,
+            ms1_stats,
             id: self.id,
-        };
-        NaturalFinalizedMultiCMGStatsArrays::new(
-            FinalizedMultiCMGStatsArrays::from(tmp),
-            &self.converters.0,
-            &self.converters.1,
-        )
+        }
     }
 }
 

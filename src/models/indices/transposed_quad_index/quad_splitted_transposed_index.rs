@@ -10,7 +10,7 @@ use crate::models::frames::raw_peak::RawPeak;
 use crate::models::frames::single_quad_settings::{
     get_matching_quad_settings, SingleQuadrupoleSetting, SingleQuadrupoleSettingIndex,
 };
-use crate::models::queries::FragmentGroupIndexQuery;
+use crate::models::queries::{FragmentGroupIndexQuery, MsLevelContext};
 use crate::traits::aggregator::Aggregator;
 use crate::traits::queriable_data::QueriableData;
 use crate::utils::display::{glimpse_vec, GlimpseConfig};
@@ -52,7 +52,7 @@ impl Debug for QuadSplittedTransposedIndex {
 }
 
 impl QuadSplittedTransposedIndex {
-    pub fn query_peaks<F>(
+    pub fn query_ms2_peaks<F>(
         &self,
         tof_range: IncludedRange<u32>,
         precursor_mz_range: IncludedRange<f64>,
@@ -65,11 +65,24 @@ impl QuadSplittedTransposedIndex {
         let matching_quads: Vec<SingleQuadrupoleSettingIndex> = self
             .get_matching_quad_settings(precursor_mz_range, scan_range)
             .collect();
-        trace!("matching_quads: {:?}", matching_quads);
-        self.query_precursor_peaks(&matching_quads, tof_range, scan_range, rt_range_seconds, f);
+        self.query_peaks_in_precursors(&matching_quads, tof_range, scan_range, rt_range_seconds, f);
     }
 
-    fn query_precursor_peaks<F>(
+    fn query_ms1_peaks<F>(
+        &self,
+        tof_range: IncludedRange<u32>,
+        scan_range: Option<IncludedRange<usize>>,
+        rt_range_seconds: Option<IncludedRange<f32>>,
+        f: &mut F,
+    ) where
+        F: FnMut(PeakInQuad),
+    {
+        self.precursor_index
+            .query_peaks(tof_range, scan_range, rt_range_seconds)
+            .for_each(f);
+    }
+
+    fn query_peaks_in_precursors<F>(
         &self,
         matching_quads: &[SingleQuadrupoleSettingIndex],
         tof_range: IncludedRange<u32>,
@@ -303,9 +316,10 @@ impl QuadSplittedTransposedIndexBuilder {
 }
 
 impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
-    QueriableData<FragmentGroupIndexQuery<FH>, (RawPeak, FH)> for QuadSplittedTransposedIndex
+    QueriableData<FragmentGroupIndexQuery<FH>, RawPeak, MsLevelContext<usize, FH>>
+    for QuadSplittedTransposedIndex
 {
-    fn query(&self, fragment_query: &FragmentGroupIndexQuery<FH>) -> Vec<(RawPeak, FH)> {
+    fn query(&self, fragment_query: &FragmentGroupIndexQuery<FH>) -> Vec<RawPeak> {
         let precursor_mz_range = IncludedRange::new(
             fragment_query.precursor_query.isolation_mz_range.0 as f64,
             fragment_query.precursor_query.isolation_mz_range.0 as f64,
@@ -313,16 +327,15 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
         let scan_range = Some(fragment_query.precursor_query.mobility_index_range);
 
         fragment_query
-            .mz_index_ranges
-            .iter()
-            .flat_map(|(fh, tof_range)| {
-                let mut local_vec: Vec<(RawPeak, FH)> = vec![];
-                self.query_peaks(
-                    *tof_range,
+            .iter_ms2_mzs()
+            .flat_map(|(_fh, tof_range)| {
+                let mut local_vec: Vec<RawPeak> = vec![];
+                self.query_ms2_peaks(
+                    tof_range,
                     precursor_mz_range,
                     scan_range,
                     Some(fragment_query.precursor_query.rt_range_seconds),
-                    &mut |x| local_vec.push((RawPeak::from(x), *fh)),
+                    &mut |x| local_vec.push(RawPeak::from(x)),
                 );
 
                 local_vec
@@ -330,10 +343,14 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
             .collect()
     }
 
-    fn add_query<A, O, AG>(&self, fragment_query: &FragmentGroupIndexQuery<FH>, aggregator: &mut AG)
-    where
-        A: From<(RawPeak, FH)> + Send + Sync + Clone + Copy,
-        AG: Aggregator<Item = A, Output = O>,
+    fn add_query<A, O, AG, C2>(
+        &self,
+        fragment_query: &FragmentGroupIndexQuery<FH>,
+        aggregator: &mut AG,
+    ) where
+        A: From<RawPeak> + Send + Sync + Clone + Copy,
+        AG: Aggregator<Item = A, Output = O, Context = C2>,
+        MsLevelContext<usize, FH>: Into<C2>,
     {
         let precursor_mz_range = IncludedRange::new(
             fragment_query.precursor_query.isolation_mz_range.0 as f64,
@@ -341,27 +358,29 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
         );
         let scan_range = Some(fragment_query.precursor_query.mobility_index_range);
 
-        fragment_query
-            .mz_index_ranges
-            .iter()
-            .for_each(|(fh, tof_range)| {
-                self.query_peaks(
-                    *tof_range,
-                    precursor_mz_range,
-                    scan_range,
-                    Some(fragment_query.precursor_query.rt_range_seconds),
-                    &mut |peak| aggregator.add((RawPeak::from(peak), *fh)),
-                );
-            })
+        fragment_query.iter_ms2_mzs().for_each(|(fh, tof_range)| {
+            if aggregator.supports_context() {
+                aggregator.set_context(fh.into());
+            }
+
+            self.query_ms2_peaks(
+                tof_range,
+                precursor_mz_range,
+                scan_range,
+                Some(fragment_query.precursor_query.rt_range_seconds),
+                &mut |peak| aggregator.add(RawPeak::from(peak)),
+            );
+        })
     }
 
-    fn add_query_multi_group<A, O, AG>(
+    fn add_query_multi_group<A, O, AG, C2>(
         &self,
         fragment_queries: &[FragmentGroupIndexQuery<FH>],
         aggregator: &mut [AG],
     ) where
-        A: From<(RawPeak, FH)> + Send + Sync + Clone + Copy,
-        AG: Aggregator<Item = A, Output = O>,
+        A: From<RawPeak> + Send + Sync + Clone + Copy,
+        AG: Aggregator<Item = A, Output = O, Context = C2>,
+        MsLevelContext<usize, FH>: Into<C2>,
     {
         fragment_queries
             .par_iter()
@@ -379,13 +398,28 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
                     .get_matching_quad_settings(precursor_mz_range, scan_range)
                     .collect();
 
-                for (fh, tof_range) in fragment_query.mz_index_ranges.clone().into_iter() {
-                    self.query_precursor_peaks(
+                for (fh, tof_range) in fragment_query.iter_ms1_mzs() {
+                    if agg.supports_context() {
+                        agg.set_context(fh.into());
+                    }
+                    self.query_ms1_peaks(
+                        tof_range,
+                        scan_range,
+                        Some(fragment_query.precursor_query.rt_range_seconds),
+                        &mut |peak| agg.add(RawPeak::from(peak)),
+                    );
+                }
+
+                for (fh, tof_range) in fragment_query.iter_ms2_mzs() {
+                    if agg.supports_context() {
+                        agg.set_context(fh.into());
+                    }
+                    self.query_peaks_in_precursors(
                         &local_quad_vec,
                         tof_range,
                         scan_range,
                         Some(fragment_query.precursor_query.rt_range_seconds),
-                        &mut |peak| agg.add((RawPeak::from(peak), fh)),
+                        &mut |peak| agg.add(RawPeak::from(peak)),
                     );
                 }
             });

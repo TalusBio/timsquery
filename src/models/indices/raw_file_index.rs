@@ -1,7 +1,7 @@
 use crate::models::adapters::FragmentIndexAdapter;
 use crate::models::frames::raw_frames::frame_elems_matching;
 use crate::models::frames::raw_peak::RawPeak;
-use crate::models::queries::{FragmentGroupIndexQuery, NaturalPrecursorQuery, PrecursorIndexQuery};
+use crate::models::queries::{FragmentGroupIndexQuery, MsLevelContext};
 use crate::traits::aggregator::Aggregator;
 use crate::traits::queriable_data::QueriableData;
 use crate::utils::tolerance_ranges::IncludedRange;
@@ -43,7 +43,7 @@ impl RawFileIndex {
     >(
         &'a self,
         fqs: &'b FragmentGroupIndexQuery<FH>,
-        fun: &'c mut dyn for<'r> FnMut(RawPeak, FH),
+        fun: &'c mut dyn for<'r> FnMut(RawPeak),
     ) {
         trace!("RawFileIndex::apply_on_query");
         trace!("FragmentGroupIndexQuery: {:?}", fqs);
@@ -56,7 +56,7 @@ impl RawFileIndex {
         let pq = &fqs.precursor_query;
         let iso_mz_range = pq.isolation_mz_range;
         for frame in frames {
-            for (fh, tof_range) in fqs.mz_index_ranges.iter() {
+            for (_fh, tof_range) in fqs.mz_index_ranges.iter() {
                 let scan_range = pq.mobility_index_range;
                 let peaks = frame_elems_matching(
                     &frame,
@@ -65,7 +65,7 @@ impl RawFileIndex {
                     Some((iso_mz_range.start() as f64, iso_mz_range.end() as f64).into()),
                 );
                 for peak in peaks {
-                    fun(peak, *fh);
+                    fun(peak);
                 }
             }
         }
@@ -91,29 +91,35 @@ impl RawFileIndex {
 }
 
 impl<FH: Hash + Copy + Clone + Serialize + Eq + Debug + Send + Sync>
-    QueriableData<FragmentGroupIndexQuery<FH>, (RawPeak, FH)> for RawFileIndex
+    QueriableData<FragmentGroupIndexQuery<FH>, RawPeak, MsLevelContext<usize, FH>>
+    for RawFileIndex
 {
-    fn query(&self, fragment_query: &FragmentGroupIndexQuery<FH>) -> Vec<(RawPeak, FH)> {
+    fn query(&self, fragment_query: &FragmentGroupIndexQuery<FH>) -> Vec<RawPeak> {
         let mut out = Vec::new();
-        self.apply_on_query(fragment_query, &mut |x, y| out.push((x, y)));
+        self.apply_on_query(fragment_query, &mut |x| out.push(x));
         out
     }
 
-    fn add_query<A, O, AG>(&self, fragment_query: &FragmentGroupIndexQuery<FH>, aggregator: &mut AG)
-    where
-        A: From<(RawPeak, FH)> + Send + Sync + Clone + Copy,
-        AG: Aggregator<Item = A, Output = O>,
+    fn add_query<A, O, AG, C2>(
+        &self,
+        fragment_query: &FragmentGroupIndexQuery<FH>,
+        aggregator: &mut AG,
+    ) where
+        A: From<RawPeak> + Send + Sync + Clone + Copy,
+        AG: Aggregator<Item = A, Output = O, Context = C2>,
+        MsLevelContext<usize, FH>: Into<C2>,
     {
-        self.apply_on_query(fragment_query, &mut |x, y| aggregator.add((x, y)));
+        self.apply_on_query(fragment_query, &mut |x| aggregator.add(x));
     }
 
-    fn add_query_multi_group<A, O, AG>(
+    fn add_query_multi_group<A, O, AG, C2>(
         &self,
         fragment_queries: &[FragmentGroupIndexQuery<FH>],
         aggregator: &mut [AG],
     ) where
-        A: From<(RawPeak, FH)> + Send + Sync + Clone + Copy,
-        AG: Aggregator<Item = A, Output = O>,
+        A: From<RawPeak> + Send + Sync + Clone + Copy,
+        AG: Aggregator<Item = A, Output = O, Context = C2>,
+        MsLevelContext<usize, FH>: Into<C2>,
     {
         fragment_queries
             .iter()

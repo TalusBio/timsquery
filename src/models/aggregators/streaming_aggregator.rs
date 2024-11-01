@@ -12,6 +12,24 @@ pub enum StreamingAggregatorError {
 
 type Result<T> = std::result::Result<T, StreamingAggregatorError>;
 
+/// A struct that can be used to calculate the mean and variance of a stream of numbers.
+///
+/// # Example
+///
+/// ```
+/// use timsquery::models::aggregators::streaming_aggregator::RunningStatsCalculator;
+///
+/// // Create a new calculator with a weight of 10 and a mean of 0.0
+/// let mut calc = RunningStatsCalculator::new(2, 0.0);
+/// calc.add(10.0, 2);
+/// // So overall this should be the equivalent of the mean for
+/// // [0.0, 0.0, 10.0, 10.0]
+/// assert_eq!(calc.mean().unwrap(), 5.0);
+///
+/// ```
+///
+/// # Notes
+///
 /// Ref impl in javascript ...
 /// https://nestedsoftware.com/2018/03/27/calculating-standard-deviation-on-streaming-data-253l.23919.html
 /// https://nestedsoftware.com/2019/09/26/incremental-average-and-standard-deviation-with-sliding-window-470k.176143.html

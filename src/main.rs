@@ -8,8 +8,7 @@ use timsquery::traits::tolerance::DefaultTolerance;
 use timsquery::traits::tolerance::{MobilityTolerance, MzToleramce, QuadTolerance, RtTolerance};
 use timsquery::{
     models::aggregators::{
-        ChromatomobilogramStats, ExtractedIonChromatomobilogram, MultiCMGStatsFactory,
-        RawPeakIntensityAggregator, RawPeakVectorAggregator,
+        MultiCMGStatsFactory, RawPeakIntensityAggregator, RawPeakVectorAggregator,
     },
     models::indices::{ExpandedRawFrameIndex, QuadSplittedTransposedIndex},
 };
@@ -155,8 +154,6 @@ pub enum PossibleAggregator {
     #[default]
     RawPeakIntensityAggregator,
     RawPeakVectorAggregator,
-    ExtractedIonChromatomobilogram,
-    ChromatoMobilogramStat,
     MultiCMGStats,
 }
 
@@ -301,14 +298,6 @@ pub fn execute_query(
                     let aggregator = RawPeakVectorAggregator::new;
                     execute_query_inner!(index, aggregator);
                 }
-                PossibleAggregator::ChromatoMobilogramStat => {
-                    let aggregator = ChromatomobilogramStats::new;
-                    execute_query_inner!(index, aggregator);
-                }
-                PossibleAggregator::ExtractedIonChromatomobilogram => {
-                    let aggregator = ExtractedIonChromatomobilogram::new;
-                    execute_query_inner!(index, aggregator);
-                }
                 PossibleAggregator::MultiCMGStats => {
                     let factory = MultiCMGStatsFactory {
                         converters: (index.mz_converter, index.im_converter),
@@ -327,14 +316,6 @@ pub fn execute_query(
                 }
                 PossibleAggregator::RawPeakVectorAggregator => {
                     let aggregator = RawPeakVectorAggregator::new;
-                    execute_query_inner!(index, aggregator);
-                }
-                PossibleAggregator::ChromatoMobilogramStat => {
-                    let aggregator = ChromatomobilogramStats::new;
-                    execute_query_inner!(index, aggregator);
-                }
-                PossibleAggregator::ExtractedIonChromatomobilogram => {
-                    let aggregator = ExtractedIonChromatomobilogram::new;
                     execute_query_inner!(index, aggregator);
                 }
                 PossibleAggregator::MultiCMGStats => {

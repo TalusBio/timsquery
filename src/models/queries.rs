@@ -1,4 +1,4 @@
-use crate::traits::aggregator::ProvidesContext;
+use crate::traits::aggregator::{NoContext, ProvidesContext};
 use crate::utils::tolerance_ranges::IncludedRange;
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -13,7 +13,14 @@ pub struct PrecursorIndexQuery {
     pub isolation_mz_range: IncludedRange<f32>,
 }
 
-#[derive(Debug, Clone)]
+/// Pretty Generic Definition of the context of a query.
+///
+/// The context is used to pass additional information to the aggregator.
+/// And this implementation simply says  that there will be something passed.
+/// if its an MS1 and maybe something else if its an MS2.
+///
+/// The aggregator should be able to handle this in its definition.
+#[derive(Debug, Clone, Copy)]
 pub enum MsLevelContext<T1, T2> {
     MS1(T1),
     MS2(T2),
@@ -26,7 +33,41 @@ pub struct FragmentGroupIndexQuery<FH: Clone + Eq + Hash + Send + Sync + Copy> {
 }
 
 impl<FH: Clone + Eq + Hash + Send + Sync + Copy> ProvidesContext for FragmentGroupIndexQuery<FH> {
-    type Context = MsLevelContext<FH, usize>;
+    type Context = MsLevelContext<usize, FH>;
+}
+
+#[allow(clippy::from_over_into)]
+impl<FH: Clone + Eq + Hash + Send + Sync + Copy> Into<NoContext> for MsLevelContext<usize, FH> {
+    fn into(self) -> NoContext {
+        NoContext {}
+    }
+}
+
+impl<FH: Clone + Eq + Hash + Send + Sync + Copy> FragmentGroupIndexQuery<FH> {
+    // TODO find if there is a good way to specify in the type that the
+    // Only a specific context is returned from each function.
+
+    pub fn iter_ms1_mzs(
+        &self,
+    ) -> impl Iterator<Item = (MsLevelContext<usize, FH>, IncludedRange<u32>)> + '_ {
+        let out = self
+            .precursor_query
+            .mz_index_ranges
+            .iter()
+            .enumerate()
+            .map(|(i, mz_range)| (MsLevelContext::MS1(i), *mz_range));
+        out
+    }
+
+    pub fn iter_ms2_mzs(
+        &self,
+    ) -> impl Iterator<Item = (MsLevelContext<usize, FH>, IncludedRange<u32>)> + '_ {
+        let out = self
+            .mz_index_ranges
+            .iter()
+            .map(|(i, mz_range)| (MsLevelContext::MS2(*i), *mz_range));
+        out
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -49,7 +90,7 @@ impl NaturalPrecursorQuery {
                 im_converter.invert(self.mobility_range.end()).round() as usize,
             )
                 .into(),
-            rt_range_seconds: self.rt_range.clone(),
+            rt_range_seconds: self.rt_range,
             mz_index_ranges: self
                 .mz_ranges
                 .iter()

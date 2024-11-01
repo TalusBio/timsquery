@@ -9,6 +9,8 @@ use std::collections::HashMap;
 
 pub type MappingCollection<T1, T2> = HashMap<T1, T2>;
 
+/// A struct that can be used to calculate the mean and variance
+/// of a stream of weighted tof and scan numbers.
 #[derive(Debug, Clone)]
 pub struct ScanTofStatsCalculatorPair {
     pub scan: RunningStatsCalculator,

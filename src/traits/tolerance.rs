@@ -26,6 +26,7 @@ pub enum QuadTolerance {
     Absolute((f32, f32, u8)),
 }
 
+// TODO: Rename to something that does not use the 'Default'
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DefaultTolerance {
     pub ms: MzToleramce,

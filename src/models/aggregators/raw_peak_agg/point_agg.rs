@@ -3,23 +3,18 @@ use crate::traits::aggregator::{Aggregator, NoContext, ProvidesContext};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy)]
-pub struct RawPeakIntensityAggregator<T> {
+pub struct RawPeakIntensityAggregator {
     pub id: u64,
     pub intensity: u64,
-    _phantom: std::marker::PhantomData<T>,
 }
 
-impl<T: Send + Sync> RawPeakIntensityAggregator<T> {
+impl RawPeakIntensityAggregator {
     pub fn new(id: u64) -> Self {
-        Self {
-            id,
-            intensity: 0,
-            _phantom: std::marker::PhantomData,
-        }
+        Self { id, intensity: 0 }
     }
 }
 
-impl<T: Send + Sync + Clone> Aggregator for RawPeakIntensityAggregator<T> {
+impl Aggregator for RawPeakIntensityAggregator {
     type Item = RawPeak;
     type Context = NoContext;
     type Output = u64;
@@ -31,6 +26,10 @@ impl<T: Send + Sync + Clone> Aggregator for RawPeakIntensityAggregator<T> {
 
     fn finalize(self) -> u64 {
         self.intensity
+    }
+
+    fn supports_context(&self) -> bool {
+        false
     }
 }
 
@@ -83,5 +82,9 @@ impl Aggregator for RawPeakVectorAggregator {
 
     fn finalize(self) -> RawPeakVectorArrays {
         self.peaks
+    }
+
+    fn supports_context(&self) -> bool {
+        false
     }
 }
