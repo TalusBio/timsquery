@@ -1,29 +1,54 @@
-use rand::{Rng, SeedableRng};
+use rand::{
+    Rng,
+    SeedableRng,
+};
 use rand_chacha::ChaCha8Rng;
 use serde::Serialize;
-use std::collections::HashMap;
-use std::env;
-use std::fs::File;
-use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    env,
+    fs::File,
+    path::{
+        Path,
+        PathBuf,
+    },
+    time::{
+        Duration,
+        Instant,
+    },
+};
 use timsquery::{
     models::{
         aggregators::RawPeakIntensityAggregator,
         indices::{
-            expanded_raw_index::ExpandedRawFrameIndex, raw_file_index::RawFileIndex,
+            expanded_raw_index::ExpandedRawFrameIndex,
+            raw_file_index::RawFileIndex,
             transposed_quad_index::QuadSplittedTransposedIndex,
         },
     },
     queriable_tims_data::queriable_tims_data::query_multi_group,
     traits::tolerance::{
-        DefaultTolerance, MobilityTolerance, MzToleramce, QuadTolerance, RtTolerance,
+        DefaultTolerance,
+        MobilityTolerance,
+        MzToleramce,
+        QuadTolerance,
+        RtTolerance,
     },
     ElutionGroup,
 };
 use tracing::subscriber::set_global_default;
-use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
+use tracing_bunyan_formatter::{
+    BunyanFormattingLayer,
+    JsonStorageLayer,
+};
 use tracing_chrome::ChromeLayerBuilder;
-use tracing_subscriber::{fmt, prelude::*, registry::Registry, EnvFilter, Layer};
+use tracing_subscriber::{
+    fmt,
+    prelude::*,
+    registry::Registry,
+    EnvFilter,
+    Layer,
+};
 
 const NUM_ELUTION_GROUPS: usize = 1000;
 const NUM_ITERATIONS: usize = 1;

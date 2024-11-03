@@ -1,33 +1,73 @@
-use super::quad_index::{TransposedQuadIndex, TransposedQuadIndexBuilder};
-use crate::errors::Result;
-use crate::models::adapters::FragmentIndexAdapter;
-use crate::models::elution_group::ElutionGroup;
-use crate::models::frames::expanded_frame::{
-    par_read_and_expand_frames, ExpandedFrameSlice, FrameProcessingConfig, SortingStateTrait,
+use super::quad_index::{
+    TransposedQuadIndex,
+    TransposedQuadIndexBuilder,
 };
-use crate::models::frames::peak_in_quad::PeakInQuad;
-use crate::models::frames::raw_peak::RawPeak;
-use crate::models::frames::single_quad_settings::{
-    get_matching_quad_settings, SingleQuadrupoleSetting, SingleQuadrupoleSettingIndex,
+use crate::{
+    errors::Result,
+    models::{
+        adapters::FragmentIndexAdapter,
+        elution_group::ElutionGroup,
+        frames::{
+            expanded_frame::{
+                par_read_and_expand_frames,
+                ExpandedFrameSlice,
+                FrameProcessingConfig,
+                SortingStateTrait,
+            },
+            peak_in_quad::PeakInQuad,
+            raw_peak::RawPeak,
+            single_quad_settings::{
+                get_matching_quad_settings,
+                SingleQuadrupoleSetting,
+                SingleQuadrupoleSettingIndex,
+            },
+        },
+        queries::{
+            FragmentGroupIndexQuery,
+            MsLevelContext,
+        },
+    },
+    traits::{
+        aggregator::Aggregator,
+        queriable_data::QueriableData,
+    },
+    utils::{
+        display::{
+            glimpse_vec,
+            GlimpseConfig,
+        },
+        tolerance_ranges::IncludedRange,
+    },
+    ToleranceAdapter,
 };
-use crate::models::queries::{FragmentGroupIndexQuery, MsLevelContext};
-use crate::traits::aggregator::Aggregator;
-use crate::traits::queriable_data::QueriableData;
-use crate::utils::display::{glimpse_vec, GlimpseConfig};
-use crate::utils::tolerance_ranges::IncludedRange;
-use crate::ToleranceAdapter;
 use rayon::prelude::*;
 use serde::Serialize;
-use std::collections::HashMap;
-use std::fmt::Debug;
-use std::fmt::Display;
-use std::hash::Hash;
-use std::time::Instant;
-use timsrust::converters::{Scan2ImConverter, Tof2MzConverter};
-use timsrust::readers::{FrameReader, MetadataReader};
-use timsrust::Metadata;
-use tracing::instrument;
-use tracing::{debug, info, trace};
+use std::{
+    collections::HashMap,
+    fmt::{
+        Debug,
+        Display,
+    },
+    hash::Hash,
+    time::Instant,
+};
+use timsrust::{
+    converters::{
+        Scan2ImConverter,
+        Tof2MzConverter,
+    },
+    readers::{
+        FrameReader,
+        MetadataReader,
+    },
+    Metadata,
+};
+use tracing::{
+    debug,
+    info,
+    instrument,
+    trace,
+};
 
 // TODO break this module apart ... its getting too big for my taste
 // - JSP: 2024-11-19

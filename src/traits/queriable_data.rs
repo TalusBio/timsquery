@@ -1,4 +1,7 @@
-use crate::traits::aggregator::{Aggregator, ProvidesContext};
+use crate::traits::aggregator::{
+    Aggregator,
+    ProvidesContext,
+};
 use rayon::prelude::*;
 
 pub trait QueriableData<QF, I, C>

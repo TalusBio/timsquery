@@ -1,4 +1,7 @@
-use timsrust::{Frame, QuadrupoleSettings};
+use timsrust::{
+    Frame,
+    QuadrupoleSettings,
+};
 
 use super::raw_peak::RawPeak;
 use crate::utils::tolerance_ranges::IncludedRange;
@@ -39,9 +42,7 @@ pub fn frame_elems_matching(
 ) -> impl Iterator<Item = RawPeak> + '_ {
     trace!(
         "frame_elems_matching tof_range: {:?}, scan_range: {:?}, quad_range: {:?}",
-        tof_range,
-        scan_range,
-        quad_range
+        tof_range, scan_range, quad_range
     );
     let quad_scan_range = quad_range
         .and_then(|quad_range| scans_matching_quad(&frame.quadrupole_settings, quad_range));

@@ -1,29 +1,57 @@
-use crate::errors::Result;
-use crate::models::adapters::FragmentIndexAdapter;
-use crate::models::elution_group::ElutionGroup;
-use crate::models::frames::expanded_frame::{
-    par_read_and_expand_frames, ExpandedFrameSlice, FrameProcessingConfig, SortedState,
+use crate::{
+    errors::Result,
+    models::{
+        adapters::FragmentIndexAdapter,
+        elution_group::ElutionGroup,
+        frames::{
+            expanded_frame::{
+                par_read_and_expand_frames,
+                ExpandedFrameSlice,
+                FrameProcessingConfig,
+                SortedState,
+            },
+            peak_in_quad::PeakInQuad,
+            raw_peak::RawPeak,
+            single_quad_settings::{
+                get_matching_quad_settings,
+                matches_quad_settings,
+                SingleQuadrupoleSetting,
+                SingleQuadrupoleSettingIndex,
+            },
+        },
+        queries::{
+            FragmentGroupIndexQuery,
+            MsLevelContext,
+        },
+    },
+    traits::{
+        aggregator::Aggregator,
+        queriable_data::QueriableData,
+    },
+    utils::tolerance_ranges::IncludedRange,
+    ToleranceAdapter,
 };
-use crate::models::frames::peak_in_quad::PeakInQuad;
-use crate::models::frames::raw_peak::RawPeak;
-use crate::models::frames::single_quad_settings::{
-    get_matching_quad_settings, matches_quad_settings, SingleQuadrupoleSetting,
-    SingleQuadrupoleSettingIndex,
-};
-use crate::models::queries::{FragmentGroupIndexQuery, MsLevelContext};
-use crate::traits::aggregator::Aggregator;
-use crate::traits::queriable_data::QueriableData;
-use crate::utils::tolerance_ranges::IncludedRange;
-use crate::ToleranceAdapter;
 use rayon::prelude::*;
 use serde::Serialize;
-use std::collections::HashMap;
-use std::hash::Hash;
-use std::time::Instant;
-use timsrust::converters::{Scan2ImConverter, Tof2MzConverter};
-use timsrust::readers::{FrameReader, MetadataReader};
-use tracing::info;
-use tracing::instrument;
+use std::{
+    collections::HashMap,
+    hash::Hash,
+    time::Instant,
+};
+use timsrust::{
+    converters::{
+        Scan2ImConverter,
+        Tof2MzConverter,
+    },
+    readers::{
+        FrameReader,
+        MetadataReader,
+    },
+};
+use tracing::{
+    info,
+    instrument,
+};
 
 #[derive(Debug)]
 pub struct ExpandedRawFrameIndex {

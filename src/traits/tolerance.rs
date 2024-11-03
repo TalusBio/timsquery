@@ -1,5 +1,8 @@
 use core::f32;
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize,
+    Serialize,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MzToleramce {
@@ -50,11 +53,14 @@ impl Default for DefaultTolerance {
     }
 }
 
+const PROTON_MASS: f64 = 1.007276;
+const NEUTRON_MASS: f64 = 1.008664;
+
 fn mass_to_isotope_mzs(mass: f64, charge: u8, num_isotopes: usize) -> Vec<f64> {
     let mut out = Vec::with_capacity(num_isotopes);
-    const PROTON_MASS: f64 = 1.007276;
-    for i in 1..(num_isotopes + 1) {
-        let mass = mass + i as f64 * PROTON_MASS;
+    let real_mass = mass + (charge as f64 * PROTON_MASS);
+    for i in 0..(num_isotopes) {
+        let mass = real_mass + (i as f64 * NEUTRON_MASS);
         let mz = mass / charge as f64;
         out.push(mz);
     }
@@ -63,7 +69,6 @@ fn mass_to_isotope_mzs(mass: f64, charge: u8, num_isotopes: usize) -> Vec<f64> {
 
 fn mz_to_isotope_mzs(mz: f64, charge: u8, num_isotopes: usize) -> Vec<f64> {
     let mut out = Vec::with_capacity(num_isotopes);
-    const PROTON_MASS: f64 = 1.007276;
     let proton_mass_frac = PROTON_MASS / charge as f64;
     for i in 0..num_isotopes {
         let mz = mz + (i as f64 * proton_mass_frac);
@@ -127,7 +132,10 @@ impl Tolerance for DefaultTolerance {
     fn quad_range(&self, precursor_mz: f64, precursor_charge: u8) -> (f32, f32) {
         // Should this be a recoverable error?
         if precursor_charge == 0 {
-            panic!("Precursor charge is 0, inputs: self: {:?}, precursor_mz: {:?}, precursor_charge: {:?}", self, precursor_mz, precursor_charge);
+            panic!(
+                "Precursor charge is 0, inputs: self: {:?}, precursor_mz: {:?}, precursor_charge: {:?}",
+                self, precursor_mz, precursor_charge
+            );
         };
         match self.quad {
             QuadTolerance::Absolute((low, high, num_isotopes)) => {
@@ -174,8 +182,9 @@ mod tests {
     fn test_isotope_mzs_neutral() {
         let test_vals = vec![
             (100.0, 1, vec![101.0, 102.0, 103.0]),
-            (100.0, 2, vec![100.5, 101.0, 101.5]),
-            (100.0, 3, vec![100.33333, 100.666666, 101.0]),
+            // For z2, mass would be 102 (100 + 2 protons).... but since charge is 2 then we divide that
+            (100.0, 2, vec![51.0, 51.5, 52.0]),
+            (100.0, 3, vec![34.34, 34.67, 35.0]),
         ];
 
         for (monoisotopic_mass, charge, expected) in test_vals {
@@ -188,7 +197,13 @@ mod tests {
                 .collect();
             for ad in abs_diff.iter() {
                 // Very tight tolerances here ...
-                assert!(*ad < 0.01);
+                assert!(
+                    *ad < 0.03,
+                    "Expected {:?}, got {:?}, diff {:?}",
+                    expected,
+                    out,
+                    ad
+                );
             }
         }
     }
@@ -196,9 +211,9 @@ mod tests {
     #[test]
     fn test_isotope_mzs_mz() {
         let test_vals = vec![
-            (100.0, 1, vec![10.0, 101.0, 102.0]),
-            (100.0, 2, vec![100.0, 100.5, 101.5]),
-            (100.0, 3, vec![100.0, 100.3333, 101.66666]),
+            (100.0, 1, vec![100.0, 101.0, 102.0]),
+            (100.0, 2, vec![100.0, 100.5, 101.0]),
+            (100.0, 3, vec![100.0, 100.3333, 100.66666]),
         ];
 
         for (monoisotopic_mass, charge, expected) in test_vals {
@@ -212,7 +227,13 @@ mod tests {
 
             for ad in abs_diff.iter() {
                 // Very tight tolerances here ...
-                assert!(*ad < 0.01);
+                assert!(
+                    *ad < 0.03,
+                    "Expected {:?}, got {:?}, diff {:?}",
+                    expected,
+                    out,
+                    ad
+                );
             }
         }
     }

@@ -1,5 +1,7 @@
-use std::fmt::Display;
-use std::hash::Hash;
+use std::{
+    fmt::Display,
+    hash::Hash,
+};
 
 use timsrust::QuadrupoleSettings;
 
@@ -33,7 +35,13 @@ impl Display for SingleQuadrupoleSettingRanges {
         write!(
             f,
             "SingleQuadrupoleSettingRanges {{ scan_start: {}, scan_end: {}, isolation_mz: {}, isolation_width: {}, isolation_high: {}, isolation_low: {}, collision_energy: {} }}",
-            self.scan_start, self.scan_end, self.isolation_mz, self.isolation_width, self.isolation_high, self.isolation_low, self.collision_energy
+            self.scan_start,
+            self.scan_end,
+            self.isolation_mz,
+            self.isolation_width,
+            self.isolation_high,
+            self.isolation_low,
+            self.collision_energy
         )
     }
 }

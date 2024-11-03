@@ -1,5 +1,9 @@
 use crate::sort_vecs_by_first;
-use tracing::{error, info, warn};
+use tracing::{
+    error,
+    info,
+    warn,
+};
 
 use super::tolerance_ranges::IncludedRange;
 
@@ -189,11 +193,11 @@ pub fn lazy_centroid_weighted_frame<'a>(
     let out = sort_n_check(agg_intensity, agg_tof, agg_ims);
 
     // TODO:Make everything below this a separate function and accumulate it.
-    let tot_final_intensity = out.0 .1.iter().map(|x| *x as u64).sum::<u64>();
+    let tot_final_intensity = out.0.1.iter().map(|x| *x as u64).sum::<u64>();
     let inten_ratio = tot_final_intensity as f64 / initial_tot_intensity as f64;
     assert!(initial_tot_intensity >= tot_final_intensity);
 
-    let output_len = out.0 .0.len();
+    let output_len = out.0.0.len();
     let compression_ratio = output_len as f64 / arr_len as f64;
     assert!(num_added == output_len);
 
@@ -212,8 +216,8 @@ pub fn lazy_centroid_weighted_frame<'a>(
         warn!("tot_final_intensity: {:?}", tot_final_intensity);
         warn!(
             "First tof {} -> Range {:?}",
-            out.0 .0[0],
-            tof_tol_range_fn(out.0 .0[0])
+            out.0.0[0],
+            tof_tol_range_fn(out.0.0[0])
         );
         panic!();
         // warn!("agg_intensity: {:?}", out.0 .0);

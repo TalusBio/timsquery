@@ -1,5 +1,11 @@
-use crate::models::frames::raw_peak::RawPeak;
-use crate::traits::aggregator::{Aggregator, NoContext, ProvidesContext};
+use crate::{
+    models::frames::raw_peak::RawPeak,
+    traits::aggregator::{
+        Aggregator,
+        NoContext,
+        ProvidesContext,
+    },
+};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy)]
@@ -15,8 +21,8 @@ impl RawPeakIntensityAggregator {
 }
 
 impl Aggregator for RawPeakIntensityAggregator {
-    type Item = RawPeak;
     type Context = NoContext;
+    type Item = RawPeak;
     type Output = u64;
 
     fn add(&mut self, peak: impl Into<RawPeak>) {
@@ -68,8 +74,8 @@ pub struct RawPeakVectorArrays {
 }
 
 impl Aggregator for RawPeakVectorAggregator {
-    type Item = RawPeak;
     type Context = NoContext;
+    type Item = RawPeak;
     type Output = RawPeakVectorArrays;
 
     fn add(&mut self, peak: impl Into<RawPeak>) {

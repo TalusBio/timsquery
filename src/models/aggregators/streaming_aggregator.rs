@@ -4,6 +4,7 @@ use tracing::debug;
 // and another with a weight and in a streaming fashion adds the value to the accumulator
 // to calculate the total, mean and variance.
 
+// TODO: move this to the general errors.
 #[derive(Debug, Clone, Copy)]
 pub enum StreamingAggregatorError {
     DivisionByZero,
@@ -20,21 +21,29 @@ type Result<T> = std::result::Result<T, StreamingAggregatorError>;
 /// use timsquery::models::aggregators::streaming_aggregator::RunningStatsCalculator;
 ///
 /// // Create a new calculator with a weight of 10 and a mean of 0.0
-/// let mut calc = RunningStatsCalculator::new(2, 0.0);
-/// calc.add(10.0, 2);
+/// let mut calc = RunningStatsCalculator::new(1, 0.0);
+/// calc.add(10.0, 1);
+/// calc.add(0.0, 1);
+/// calc.add(10.0, 1);
+/// calc.add(0.0, 1);
+/// calc.add(10.0, 1);
+/// calc.add(0.0, 1);
 /// // So overall this should be the equivalent of the mean for
-/// // [0.0, 0.0, 10.0, 10.0]
-/// assert_eq!(calc.mean().unwrap(), 5.0);
-///
+/// // [0.0, 10.0, 0.0, 10.0, 0.0, 10.0]
+/// assert_eq!(calc.mean().unwrap(), 5.0, "{calc:#?}");
+/// assert!((4.5..5.5).contains(&calc.standard_deviation().unwrap()), "{calc:#?}");
 /// ```
 ///
 /// # Notes
+///
+/// It is important to know that the calculation of the mean is not
+/// perfect. Thus if the initial value passes if very far off the real
+/// mean, the final estimate will be off.
 ///
 /// Ref impl in javascript ...
 /// https://nestedsoftware.com/2018/03/27/calculating-standard-deviation-on-streaming-data-253l.23919.html
 /// https://nestedsoftware.com/2019/09/26/incremental-average-and-standard-deviation-with-sliding-window-470k.176143.html
 /// Read the blog ... its amazing.
-///
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RunningStatsCalculator {
     weight: u64,

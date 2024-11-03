@@ -1,20 +1,40 @@
-use crate::models::adapters::FragmentIndexAdapter;
-use crate::models::frames::raw_frames::frame_elems_matching;
-use crate::models::frames::raw_peak::RawPeak;
-use crate::models::queries::{FragmentGroupIndexQuery, MsLevelContext};
-use crate::traits::aggregator::Aggregator;
-use crate::traits::queriable_data::QueriableData;
-use crate::utils::tolerance_ranges::IncludedRange;
-use crate::ElutionGroup;
-use crate::ToleranceAdapter;
+use crate::{
+    models::{
+        adapters::FragmentIndexAdapter,
+        frames::{
+            raw_frames::frame_elems_matching,
+            raw_peak::RawPeak,
+        },
+        queries::{
+            FragmentGroupIndexQuery,
+            MsLevelContext,
+        },
+    },
+    traits::{
+        aggregator::Aggregator,
+        queriable_data::QueriableData,
+    },
+    utils::tolerance_ranges::IncludedRange,
+    ElutionGroup,
+    ToleranceAdapter,
+};
 use rayon::iter::ParallelIterator;
 use serde::Serialize;
-use std::fmt::Debug;
-use std::hash::Hash;
-use timsrust::converters::ConvertableDomain;
-use timsrust::readers::{FrameReader, FrameReaderError, MetadataReader};
-use timsrust::TimsRustError;
-use timsrust::{Frame, Metadata};
+use std::{
+    fmt::Debug,
+    hash::Hash,
+};
+use timsrust::{
+    converters::ConvertableDomain,
+    readers::{
+        FrameReader,
+        FrameReaderError,
+        MetadataReader,
+    },
+    Frame,
+    Metadata,
+    TimsRustError,
+};
 use tracing::trace;
 
 pub struct RawFileIndex {

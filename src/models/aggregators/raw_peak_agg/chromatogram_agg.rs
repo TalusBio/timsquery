@@ -1,11 +1,15 @@
 use super::super::streaming_aggregator::RunningStatsCalculator;
-use crate::models::frames::raw_peak::RawPeak;
-use crate::sort_vecs_by_first;
-use crate::traits::aggregator::Aggregator;
+use crate::{
+    models::frames::raw_peak::RawPeak,
+    sort_vecs_by_first,
+    traits::aggregator::Aggregator,
+};
 
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::HashMap;
+use std::collections::{
+    BTreeMap,
+    HashMap,
+};
 
 pub type MappingCollection<T1, T2> = HashMap<T1, T2>;
 
@@ -27,6 +31,7 @@ impl ScanTofStatsCalculatorPair {
             tof: RunningStatsCalculator::new(intensity, tof_index),
         }
     }
+
     pub fn add(&mut self, intensity: u64, scan_index: usize, tof_index: u32) {
         self.scan.add(scan_index as f64, intensity);
         self.tof.add(tof_index as f64, intensity);

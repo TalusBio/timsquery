@@ -1,23 +1,57 @@
-use super::peak_in_quad::PeakInQuad;
-use super::single_quad_settings::{
-    expand_quad_settings, ExpandedFrameQuadSettings, SingleQuadrupoleSetting,
+use super::{
+    peak_in_quad::PeakInQuad,
+    single_quad_settings::{
+        expand_quad_settings,
+        ExpandedFrameQuadSettings,
+        SingleQuadrupoleSetting,
+    },
 };
-use crate::errors::{Result, UnsupportedDataError};
-use crate::sort_vecs_by_first;
-use crate::utils::compress_explode::explode_vec;
-use crate::utils::frame_processing::{lazy_centroid_weighted_frame, PeakArrayRefs};
-use crate::utils::sorting::top_n;
-use crate::utils::tolerance_ranges::IncludedRange;
-use crate::utils::tolerance_ranges::{scan_tol_range, tof_tol_range};
+use crate::{
+    errors::{
+        Result,
+        UnsupportedDataError,
+    },
+    sort_vecs_by_first,
+    utils::{
+        compress_explode::explode_vec,
+        frame_processing::{
+            lazy_centroid_weighted_frame,
+            PeakArrayRefs,
+        },
+        sorting::top_n,
+        tolerance_ranges::{
+            scan_tol_range,
+            tof_tol_range,
+            IncludedRange,
+        },
+    },
+};
 use rayon::prelude::*;
-use std::collections::HashMap;
-use std::marker::PhantomData;
-use std::sync::Arc;
-use timsrust::converters::{Scan2ImConverter, Tof2MzConverter};
-use timsrust::readers::{FrameReader, FrameReaderError};
-use timsrust::{AcquisitionType, Frame, MSLevel, QuadrupoleSettings};
-use tracing::instrument;
-use tracing::{info, trace, warn};
+use std::{
+    collections::HashMap,
+    marker::PhantomData,
+    sync::Arc,
+};
+use timsrust::{
+    converters::{
+        Scan2ImConverter,
+        Tof2MzConverter,
+    },
+    readers::{
+        FrameReader,
+        FrameReaderError,
+    },
+    AcquisitionType,
+    Frame,
+    MSLevel,
+    QuadrupoleSettings,
+};
+use tracing::{
+    info,
+    instrument,
+    trace,
+    warn,
+};
 
 /// A frame after expanding the mobility data and re-sorting it by tof.
 #[derive(Debug, Clone)]
@@ -489,8 +523,6 @@ impl ExpandedQuadSliceInfo {
     ///    the intensity of the peak drops under 1% of its intensity.
     /// 4. The time difference between the forward and backward point is the peak width.
     /// 5. Finds the median of the peak widths.
-    ///
-    ///
     fn estimate_peak_width(frameslices: &[ExpandedFrameSlice<SortedState>]) -> Option<f64> {
         let start_idx = frameslices.len() / 5;
         let end_idx = frameslices.len() * 4 / 5;
@@ -534,11 +566,7 @@ impl ExpandedQuadSliceInfo {
                 .filter_map(|x| {
                     let a = x[0];
                     let b = x[1];
-                    if a.abs_diff(b) > 5 {
-                        Some(a)
-                    } else {
-                        None
-                    }
+                    if a.abs_diff(b) > 5 { Some(a) } else { None }
                 })
                 .collect();
 
@@ -689,9 +717,7 @@ pub fn par_expand_and_centroid_frames(
                 let end_peaks: usize = centroided.iter().map(|x| x.len()).sum();
                 trace!(
                     "Peak counts for quad {:?}: raw={}/centroid={}",
-                    qs,
-                    start_peaks,
-                    end_peaks
+                    qs, start_peaks, end_peaks
                 );
                 (qs, centroided)
             })

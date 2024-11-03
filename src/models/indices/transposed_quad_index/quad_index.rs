@@ -1,17 +1,43 @@
-use super::peak_bucket::PeakBucketBuilder;
-use super::peak_bucket::{PeakBucket, PeakInBucket};
-use crate::models::frames::expanded_frame::{ExpandedFrameSlice, SortingStateTrait};
-use crate::models::frames::peak_in_quad::PeakInQuad;
-use crate::models::frames::single_quad_settings::SingleQuadrupoleSetting;
-use crate::sort_vecs_by_first;
-use crate::utils::display::{glimpse_vec, GlimpseConfig};
-use crate::utils::tolerance_ranges::IncludedRange;
-use std::collections::{BTreeMap, HashMap};
-use std::fmt::Display;
-use std::time::Instant;
-use timsrust::converters::{ConvertableDomain, Frame2RtConverter};
-use tracing::instrument;
-use tracing::{debug, info};
+use super::peak_bucket::{
+    PeakBucket,
+    PeakBucketBuilder,
+    PeakInBucket,
+};
+use crate::{
+    models::frames::{
+        expanded_frame::{
+            ExpandedFrameSlice,
+            SortingStateTrait,
+        },
+        peak_in_quad::PeakInQuad,
+        single_quad_settings::SingleQuadrupoleSetting,
+    },
+    sort_vecs_by_first,
+    utils::{
+        display::{
+            glimpse_vec,
+            GlimpseConfig,
+        },
+        tolerance_ranges::IncludedRange,
+    },
+};
+use std::{
+    collections::{
+        BTreeMap,
+        HashMap,
+    },
+    fmt::Display,
+    time::Instant,
+};
+use timsrust::converters::{
+    ConvertableDomain,
+    Frame2RtConverter,
+};
+use tracing::{
+    debug,
+    info,
+    instrument,
+};
 
 #[derive(Debug)]
 pub struct TransposedQuadIndex {
@@ -63,8 +89,22 @@ impl Display for TransposedQuadIndex {
             f,
             "TransposedQuadIndex\n quad_settings: {:?}\n frame_indices: {}\n frame_rts: {}\n peak_buckets: {}\n",
             self.quad_settings,
-            glimpse_vec(&self.frame_indices, Some(GlimpseConfig { max_items: 10, padding: 2, new_line: true })),
-            glimpse_vec(&self.frame_rts, Some(GlimpseConfig { max_items: 10, padding: 2, new_line: true })),
+            glimpse_vec(
+                &self.frame_indices,
+                Some(GlimpseConfig {
+                    max_items: 10,
+                    padding: 2,
+                    new_line: true
+                })
+            ),
+            glimpse_vec(
+                &self.frame_rts,
+                Some(GlimpseConfig {
+                    max_items: 10,
+                    padding: 2,
+                    new_line: true
+                })
+            ),
             display_peak_bucket_map(&self.peak_buckets),
         )
     }
@@ -207,7 +247,10 @@ impl TransposedQuadIndexBuilder {
                 let curr_bucket = peak_buckets.get(&(tof as u32)).unwrap();
                 let real_count = curr_bucket.len();
                 if real_count != count {
-                    println!("TransposedQuadIndex::build failed at tof bucket count check, expected: {}, real: {}", count, real_count);
+                    println!(
+                        "TransposedQuadIndex::build failed at tof bucket count check, expected: {}, real: {}",
+                        count, real_count
+                    );
                     println!("Bucket -> {:?}", curr_bucket);
 
                     panic!("TransposedQuadIndex::build failed at tof bucket count check");
@@ -305,7 +348,10 @@ impl TransposedQuadIndexBuilder {
         }
 
         if added_peaks != tot_peaks {
-            println!("TransposedQuadIndex::add_frame_slice failed at peak count check, expected: {}, real: {}", tot_peaks, added_peaks);
+            println!(
+                "TransposedQuadIndex::add_frame_slice failed at peak count check, expected: {}, real: {}",
+                tot_peaks, added_peaks
+            );
             panic!("TransposedQuadIndex::add_frame_slice failed at peak count check");
         }
 
@@ -411,14 +457,25 @@ impl TransposedQuadIndexBuilder {
             let insertion_elapsed = insertion_st.elapsed();
             info!(
                 "BatchedBuild: quad_settings={:?} start={:?} end={:?}/{} peaks {}/{} concat took {:#?} sorting took: {:#?} insertion took {:#?}",
-                self.quad_settings, start, end, num_slices, added_peaks, tot_peaks, concat_elapsed, sorting_elapsed, insertion_elapsed,
+                self.quad_settings,
+                start,
+                end,
+                num_slices,
+                added_peaks,
+                tot_peaks,
+                concat_elapsed,
+                sorting_elapsed,
+                insertion_elapsed,
             );
             start = end;
             peaks_in_chunk = 0;
         }
 
         if added_peaks != tot_peaks {
-            println!("TransposedQuadIndex::add_frame_slice failed at peak count check, expected: {}, real: {}", tot_peaks, added_peaks);
+            println!(
+                "TransposedQuadIndex::add_frame_slice failed at peak count check, expected: {}, real: {}",
+                tot_peaks, added_peaks
+            );
             panic!("TransposedQuadIndex::add_frame_slice failed at peak count check");
         }
 

@@ -1,4 +1,8 @@
-use timsrust::converters::{ConvertableDomain, Scan2ImConverter, Tof2MzConverter};
+use timsrust::converters::{
+    ConvertableDomain,
+    Scan2ImConverter,
+    Tof2MzConverter,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct IncludedRange<T: Copy + PartialOrd>(pub T, pub T);

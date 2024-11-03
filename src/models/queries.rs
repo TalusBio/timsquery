@@ -1,8 +1,19 @@
-use crate::traits::aggregator::{NoContext, ProvidesContext};
-use crate::utils::tolerance_ranges::IncludedRange;
-use std::collections::HashMap;
-use std::hash::Hash;
-use timsrust::converters::{ConvertableDomain, Scan2ImConverter, Tof2MzConverter};
+use crate::{
+    traits::aggregator::{
+        NoContext,
+        ProvidesContext,
+    },
+    utils::tolerance_ranges::IncludedRange,
+};
+use std::{
+    collections::HashMap,
+    hash::Hash,
+};
+use timsrust::converters::{
+    ConvertableDomain,
+    Scan2ImConverter,
+    Tof2MzConverter,
+};
 
 #[derive(Debug, Clone)]
 pub struct PrecursorIndexQuery {

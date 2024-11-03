@@ -1,11 +1,20 @@
-use crate::models::elution_group::ElutionGroup;
-use crate::models::queries::{FragmentGroupIndexQuery, PrecursorIndexQuery};
-use crate::utils::tolerance_ranges::IncludedRange;
-use crate::ToleranceAdapter;
+use crate::{
+    models::{
+        elution_group::ElutionGroup,
+        queries::{
+            FragmentGroupIndexQuery,
+            PrecursorIndexQuery,
+        },
+    },
+    utils::tolerance_ranges::IncludedRange,
+    ToleranceAdapter,
+};
 use serde::Serialize;
 use std::hash::Hash;
-use timsrust::converters::ConvertableDomain;
-use timsrust::Metadata;
+use timsrust::{
+    converters::ConvertableDomain,
+    Metadata,
+};
 
 #[derive(Debug, Default)]
 pub struct FragmentIndexAdapter {

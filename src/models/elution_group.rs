@@ -1,13 +1,17 @@
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::hash::Hash;
+use serde::{
+    Deserialize,
+    Serialize,
+};
+use std::{
+    collections::HashMap,
+    hash::Hash,
+};
 
 /// A struct that represents an elution group.
 ///
 /// The elution group is a single precursor ion that is framented.
 /// The fragments m/z values are stored in a hashmap where the key is
 /// the generic type `T` and the value is the fragment m/z.
-///
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ElutionGroup<T: Clone + Eq + Serialize + Hash + Send + Sync> {
     pub id: u64,

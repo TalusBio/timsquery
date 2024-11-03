@@ -1,21 +1,50 @@
-use clap::{Parser, Subcommand};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::time::Instant;
-use timsquery::models::elution_group::ElutionGroup;
-use timsquery::queriable_tims_data::queriable_tims_data::query_multi_group;
-use timsquery::traits::tolerance::DefaultTolerance;
-use timsquery::traits::tolerance::{MobilityTolerance, MzToleramce, QuadTolerance, RtTolerance};
-use timsquery::{
-    models::aggregators::{
-        MultiCMGStatsFactory, RawPeakIntensityAggregator, RawPeakVectorAggregator,
-    },
-    models::indices::{ExpandedRawFrameIndex, QuadSplittedTransposedIndex},
+use clap::{
+    Parser,
+    Subcommand,
 };
-use tracing::instrument;
-use tracing::subscriber::set_global_default;
-use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
-use tracing_subscriber::{prelude::*, registry::Registry, EnvFilter};
+use serde::{
+    Deserialize,
+    Serialize,
+};
+use std::{
+    collections::HashMap,
+    time::Instant,
+};
+use timsquery::{
+    models::{
+        aggregators::{
+            MultiCMGStatsFactory,
+            RawPeakIntensityAggregator,
+            RawPeakVectorAggregator,
+        },
+        elution_group::ElutionGroup,
+        indices::{
+            ExpandedRawFrameIndex,
+            QuadSplittedTransposedIndex,
+        },
+    },
+    queriable_tims_data::queriable_tims_data::query_multi_group,
+    traits::tolerance::{
+        DefaultTolerance,
+        MobilityTolerance,
+        MzToleramce,
+        QuadTolerance,
+        RtTolerance,
+    },
+};
+use tracing::{
+    instrument,
+    subscriber::set_global_default,
+};
+use tracing_bunyan_formatter::{
+    BunyanFormattingLayer,
+    JsonStorageLayer,
+};
+use tracing_subscriber::{
+    prelude::*,
+    registry::Registry,
+    EnvFilter,
+};
 
 fn main() {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
@@ -57,8 +86,7 @@ fn main_write_template(args: WriteTemplateArgs) {
     std::fs::write(tolerance_json_path.clone(), tolerance_json).unwrap();
     println!(
         "use as `timsquery query-index --output-path '.' --raw-file-path 'your_file.d' --tolerance-settings-path {:#?} --elution-groups-path {:#?}`",
-        tolerance_json_path,
-        egs_json_path,
+        tolerance_json_path, egs_json_path,
     );
 }
 
