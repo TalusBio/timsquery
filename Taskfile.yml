@@ -49,6 +49,15 @@ tasks:
       - # SKIP_SLOW=1 SKIP_BUILD=1 SKIP_HIGHMEM=1 RUST_BACKTRACE=full TIMS_DATA_FILE=./data/LFQ_timsTOFPro_diaPASEF_Condition_A_Sample_Alpha_02.d ./target/release/benchmark_indices
       - # uv run benches/plot_bench.py data/benchmark_results_LFQ_timsTOFPro_diaPASEF_Condition_A_Sample_Alpha_02.json
 
+  plot:
+    sources:
+      - "src/**/*.rs"
+      - "data/sageresults/**/*.py"
+    cmds:
+      - cargo b --release --features build-binary --bin timsquery
+      - ./target/release/timsquery query-index --raw-file-path ./data/230510_PRTC_13_S1-B1_1_12817.d --tolerance-settings-path "templates/tolerance_settings_narrow_rt.json" --elution-groups-path "./data/sageresults/ubb_elution_groups.json" --output-path "./data/sageresults/query_results" --index expanded-raw-frame-index --aggregator multi-cmg-stats --format pretty-json
+      - cd data/sageresults && uv run plot.py
+
   templates:
     sources:
       - "src/**/*.rs"

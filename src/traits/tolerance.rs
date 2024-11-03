@@ -99,6 +99,7 @@ impl Tolerance for DefaultTolerance {
         }
     }
 
+    // TODO add an unit ...
     fn rt_range(&self, rt: f32) -> Option<(f32, f32)> {
         match self.rt {
             RtTolerance::Absolute((low, high)) => Some((rt - low, rt + high)),

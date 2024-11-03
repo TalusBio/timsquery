@@ -37,3 +37,5 @@ sequential, use that).
 
 - Add logging levels to instrumentations.
 - Add missing_docks_in_private_items to clippy.
+- Implement predicate pushdown on the setup of indices.
+- Implement predicate pushdown on query execution for raw index.
