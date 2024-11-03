@@ -49,12 +49,18 @@ for i, x in enumerate(data):
     sorted_ms2_keys = sorted(x["result"]["ms2_stats"]["transition_intensities"].keys())
 
     for j in sorted_ms1_keys:
+        col = next(colors)
         j = x["result"]["ms1_stats"]["transition_intensities"][j]
-        ax[0, i].plot(ms1_rts, j, color=next(colors))
+        ax[0, i].plot(ms1_rts, j, color=col, alpha=0.4)
+        # Draw the points
+        ax[0, i].scatter(ms1_rts, j, color=col, s=5)
 
     for j in sorted_ms2_keys:
+        col = next(colors)
         j = x["result"]["ms2_stats"]["transition_intensities"][j]
-        ax[1, i].plot(ms2_rts, j, color=next(colors))
+        ax[1, i].plot(ms2_rts, j, color=col, alpha=0.4)
+        # Draw the points
+        ax[1, i].scatter(ms2_rts, j, color=col, s=5)
 
     # Label axes ...
     ax[0, i].set_xlabel("Retention Time (min)")
