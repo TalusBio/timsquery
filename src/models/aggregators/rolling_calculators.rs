@@ -1,7 +1,4 @@
-use crate::utils::math::{
-    lnfact,
-    lnfact_float,
-};
+use crate::utils::math::lnfact;
 // Rolling median calculator
 
 pub struct RollingMedianCalculator<T: PartialOrd + Copy + Clone> {

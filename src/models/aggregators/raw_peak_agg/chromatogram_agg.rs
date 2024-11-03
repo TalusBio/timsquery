@@ -1,15 +1,8 @@
 use super::super::streaming_aggregator::RunningStatsCalculator;
-use crate::{
-    models::frames::raw_peak::RawPeak,
-    sort_vecs_by_first,
-    traits::aggregator::Aggregator,
-};
+use crate::sort_vecs_by_first;
 
 use serde::Serialize;
-use std::collections::{
-    BTreeMap,
-    HashMap,
-};
+use std::collections::HashMap;
 
 pub type MappingCollection<T1, T2> = HashMap<T1, T2>;
 

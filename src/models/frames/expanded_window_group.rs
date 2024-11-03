@@ -1,12 +1,10 @@
 use std::iter::repeat;
 
-use super::{
-    expanded_frame::{
-        ExpandedFrameSlice,
-        SortingStateTrait,
-    },
-    single_quad_settings::SingleQuadrupoleSetting,
+use super::expanded_frame::{
+    ExpandedFrameSlice,
+    SortingStateTrait,
 };
+use super::single_quad_settings::SingleQuadrupoleSetting;
 use timsrust::{
     AcquisitionType,
     MSLevel,

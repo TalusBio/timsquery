@@ -2,10 +2,8 @@ use serde::{
     Deserialize,
     Serialize,
 };
-use std::{
-    collections::HashMap,
-    hash::Hash,
-};
+use std::collections::HashMap;
+use std::hash::Hash;
 
 /// A struct that represents an elution group.
 ///

@@ -1,10 +1,7 @@
-use crate::{
-    models::frames::raw_peak::RawPeak,
-    traits::aggregator::{
-        Aggregator,
-        NoContext,
-        ProvidesContext,
-    },
+use crate::models::frames::raw_peak::RawPeak;
+use crate::traits::aggregator::{
+    Aggregator,
+    NoContext,
 };
 use serde::Serialize;
 

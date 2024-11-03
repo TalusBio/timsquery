@@ -37,7 +37,7 @@ tasks:
 
   clippy:
     cmds:
-      - cargo clippy
+      - cargo clippy {{.CLI_ARGS}}
 
   bench:
     sources:
@@ -46,8 +46,8 @@ tasks:
       - cargo b --release --features bench --bin benchmark_indices
       - SKIP_SLOW=1 SKIP_BUILD=1 RUST_BACKTRACE=full TIMS_DATA_FILE=./data/230510_PRTC_13_S1-B1_1_12817.d ./target/release/benchmark_indices
       - uv run benches/plot_bench.py data/benchmark_results_230510_PRTC_13_S1-B1_1_12817.json
-      - # SKIP_SLOW=1 SKIP_BUILD=1 SKIP_HIGHMEM=1 RUST_BACKTRACE=full TIMS_DATA_FILE=./data/LFQ_timsTOFPro_diaPASEF_Condition_A_Sample_Alpha_02.d ./target/release/benchmark_indices
-      - # uv run benches/plot_bench.py data/benchmark_results_LFQ_timsTOFPro_diaPASEF_Condition_A_Sample_Alpha_02.json
+      -  # SKIP_SLOW=1 SKIP_BUILD=1 SKIP_HIGHMEM=1 RUST_BACKTRACE=full TIMS_DATA_FILE=./data/LFQ_timsTOFPro_diaPASEF_Condition_A_Sample_Alpha_02.d ./target/release/benchmark_indices
+      -  # uv run benches/plot_bench.py data/benchmark_results_LFQ_timsTOFPro_diaPASEF_Condition_A_Sample_Alpha_02.json
 
   plot:
     sources:

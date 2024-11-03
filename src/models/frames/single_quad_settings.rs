@@ -1,7 +1,5 @@
-use std::{
-    fmt::Display,
-    hash::Hash,
-};
+use std::fmt::Display;
+use std::hash::Hash;
 
 use timsrust::QuadrupoleSettings;
 

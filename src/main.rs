@@ -6,45 +6,35 @@ use serde::{
     Deserialize,
     Serialize,
 };
-use std::{
-    collections::HashMap,
-    time::Instant,
+use std::collections::HashMap;
+use std::time::Instant;
+use timsquery::models::aggregators::{
+    MultiCMGStatsFactory,
+    RawPeakIntensityAggregator,
+    RawPeakVectorAggregator,
 };
-use timsquery::{
-    models::{
-        aggregators::{
-            MultiCMGStatsFactory,
-            RawPeakIntensityAggregator,
-            RawPeakVectorAggregator,
-        },
-        elution_group::ElutionGroup,
-        indices::{
-            ExpandedRawFrameIndex,
-            QuadSplittedTransposedIndex,
-        },
-    },
-    queriable_tims_data::queriable_tims_data::query_multi_group,
-    traits::tolerance::{
-        DefaultTolerance,
-        MobilityTolerance,
-        MzToleramce,
-        QuadTolerance,
-        RtTolerance,
-    },
+use timsquery::models::elution_group::ElutionGroup;
+use timsquery::models::indices::{
+    ExpandedRawFrameIndex,
+    QuadSplittedTransposedIndex,
 };
-use tracing::{
-    instrument,
-    subscriber::set_global_default,
+use timsquery::queriable_tims_data::queriable_tims_data::query_multi_group;
+use timsquery::traits::tolerance::{
+    DefaultTolerance,
+    MobilityTolerance,
+    MzToleramce,
+    QuadTolerance,
+    RtTolerance,
 };
+use tracing::instrument;
+use tracing::subscriber::set_global_default;
 use tracing_bunyan_formatter::{
     BunyanFormattingLayer,
     JsonStorageLayer,
 };
-use tracing_subscriber::{
-    prelude::*,
-    registry::Registry,
-    EnvFilter,
-};
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::registry::Registry;
+use tracing_subscriber::EnvFilter;
 
 fn main() {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));

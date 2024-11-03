@@ -3,32 +3,24 @@ use super::peak_bucket::{
     PeakBucketBuilder,
     PeakInBucket,
 };
-use crate::{
-    models::frames::{
-        expanded_frame::{
-            ExpandedFrameSlice,
-            SortingStateTrait,
-        },
-        peak_in_quad::PeakInQuad,
-        single_quad_settings::SingleQuadrupoleSetting,
-    },
-    sort_vecs_by_first,
-    utils::{
-        display::{
-            glimpse_vec,
-            GlimpseConfig,
-        },
-        tolerance_ranges::IncludedRange,
-    },
+use crate::models::frames::expanded_frame::{
+    ExpandedFrameSlice,
+    SortingStateTrait,
 };
-use std::{
-    collections::{
-        BTreeMap,
-        HashMap,
-    },
-    fmt::Display,
-    time::Instant,
+use crate::models::frames::peak_in_quad::PeakInQuad;
+use crate::models::frames::single_quad_settings::SingleQuadrupoleSetting;
+use crate::sort_vecs_by_first;
+use crate::utils::display::{
+    glimpse_vec,
+    GlimpseConfig,
 };
+use crate::utils::tolerance_ranges::IncludedRange;
+use std::collections::{
+    BTreeMap,
+    HashMap,
+};
+use std::fmt::Display;
+use std::time::Instant;
 use timsrust::converters::{
     ConvertableDomain,
     Frame2RtConverter,

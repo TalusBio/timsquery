@@ -51,17 +51,6 @@ fn cosine_similarity(a: &[f64], b: &[f64]) -> Option<f64> {
     Some(dot_product / (magnitude_a * magnitude_b))
 }
 
-// Example usage:
-fn main() {
-    let vector_a = vec![1.0, 2.0, 3.0];
-    let vector_b = vec![4.0, 5.0, 6.0];
-
-    match cosine_similarity(&vector_a, &vector_b) {
-        Some(similarity) => println!("Cosine similarity: {}", similarity),
-        None => println!("Could not calculate cosine similarity"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

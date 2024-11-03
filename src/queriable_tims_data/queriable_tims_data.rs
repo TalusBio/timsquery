@@ -1,5 +1,5 @@
+use crate::traits::aggregator::ProvidesContext;
 use crate::{
-    traits::aggregator::ProvidesContext,
     Aggregator,
     ElutionGroup,
     QueriableData,
@@ -8,10 +8,8 @@ use crate::{
 };
 use rayon::prelude::*;
 use serde::Serialize;
-use std::{
-    hash::Hash,
-    time::Instant,
-};
+use std::hash::Hash;
+use std::time::Instant;
 use tracing::{
     info,
     instrument,

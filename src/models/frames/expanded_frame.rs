@@ -1,46 +1,38 @@
-use super::{
-    peak_in_quad::PeakInQuad,
-    single_quad_settings::{
-        expand_quad_settings,
-        ExpandedFrameQuadSettings,
-        SingleQuadrupoleSetting,
-    },
+use super::peak_in_quad::PeakInQuad;
+use super::single_quad_settings::{
+    expand_quad_settings,
+    ExpandedFrameQuadSettings,
+    SingleQuadrupoleSetting,
 };
-use crate::{
-    errors::{
-        Result,
-        UnsupportedDataError,
-    },
-    sort_vecs_by_first,
-    utils::{
-        compress_explode::explode_vec,
-        frame_processing::{
-            lazy_centroid_weighted_frame,
-            PeakArrayRefs,
-        },
-        sorting::top_n,
-        tolerance_ranges::{
-            scan_tol_range,
-            tof_tol_range,
-            IncludedRange,
-        },
-    },
+use crate::errors::{
+    Result,
+    UnsupportedDataError,
+};
+use crate::sort_vecs_by_first;
+use crate::utils::compress_explode::explode_vec;
+use crate::utils::frame_processing::{
+    lazy_centroid_weighted_frame,
+    PeakArrayRefs,
+};
+use crate::utils::sorting::top_n;
+use crate::utils::tolerance_ranges::{
+    scan_tol_range,
+    tof_tol_range,
+    IncludedRange,
 };
 use rayon::prelude::*;
-use std::{
-    collections::HashMap,
-    marker::PhantomData,
-    sync::Arc,
+use std::collections::HashMap;
+use std::marker::PhantomData;
+use std::sync::Arc;
+use timsrust::converters::{
+    Scan2ImConverter,
+    Tof2MzConverter,
+};
+use timsrust::readers::{
+    FrameReader,
+    FrameReaderError,
 };
 use timsrust::{
-    converters::{
-        Scan2ImConverter,
-        Tof2MzConverter,
-    },
-    readers::{
-        FrameReader,
-        FrameReaderError,
-    },
     AcquisitionType,
     Frame,
     MSLevel,
@@ -540,7 +532,6 @@ impl ExpandedQuadSliceInfo {
             max_rt: f64,
             min_rt: f64,
             intensity: u32,
-            local_frame_index: usize,
             fwdone: bool,
             bwdone: bool,
             any_update: bool,
@@ -584,7 +575,6 @@ impl ExpandedQuadSliceInfo {
                         max_rt: local_rt,
                         min_rt: local_rt,
                         intensity: local_inten,
-                        local_frame_index: local_idx,
                         fwdone: false,
                         bwdone: false,
                         any_update: false,

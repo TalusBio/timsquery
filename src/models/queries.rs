@@ -1,14 +1,10 @@
-use crate::{
-    traits::aggregator::{
-        NoContext,
-        ProvidesContext,
-    },
-    utils::tolerance_ranges::IncludedRange,
+use crate::traits::aggregator::{
+    NoContext,
+    ProvidesContext,
 };
-use std::{
-    collections::HashMap,
-    hash::Hash,
-};
+use crate::utils::tolerance_ranges::IncludedRange;
+use std::collections::HashMap;
+use std::hash::Hash;
 use timsrust::converters::{
     ConvertableDomain,
     Scan2ImConverter,
@@ -118,7 +114,7 @@ impl NaturalPrecursorQuery {
                 im_converter.invert(self.mobility_range.end()).round() as usize,
             )
                 .into(),
-            isolation_mz_range: self.isolation_mz_range.clone(),
+            isolation_mz_range: self.isolation_mz_range,
         }
     }
 }

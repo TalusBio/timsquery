@@ -1,14 +1,10 @@
-use crate::{
-    sort_vecs_by_first,
-    utils::{
-        compress_explode::compress_vec,
-        display::{
-            glimpse_vec,
-            GlimpseConfig,
-        },
-        tolerance_ranges::IncludedRange,
-    },
+use crate::sort_vecs_by_first;
+use crate::utils::compress_explode::compress_vec;
+use crate::utils::display::{
+    glimpse_vec,
+    GlimpseConfig,
 };
+use crate::utils::tolerance_ranges::IncludedRange;
 use std::fmt::Display;
 
 pub struct PeakInBucket {

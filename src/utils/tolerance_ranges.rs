@@ -41,9 +41,9 @@ impl<T: Copy + PartialOrd> From<(T, T)> for IncludedRange<T> {
     }
 }
 
-impl<T: Copy + PartialOrd> Into<(T, T)> for IncludedRange<T> {
-    fn into(self) -> (T, T) {
-        (self.0, self.1)
+impl<T: Copy + PartialOrd> From<IncludedRange<T>> for (T, T) {
+    fn from(val: IncludedRange<T>) -> Self {
+        (val.0, val.1)
     }
 }
 

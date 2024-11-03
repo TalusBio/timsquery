@@ -21,7 +21,7 @@ your file, and you get back results that match those three things!
 More explicitly:
 - The main design is to have modular components:
     - aggregators
-    - indices 
+    - indices
     - queries
     - tolerances
 
