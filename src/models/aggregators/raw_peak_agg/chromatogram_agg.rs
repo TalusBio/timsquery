@@ -1,10 +1,13 @@
 use super::super::streaming_aggregator::RunningStatsCalculator;
 use crate::sort_vecs_by_first;
 
+use nohash_hasher::{
+    BuildNoHashHasher,
+    NoHashHasher,
+};
 use serde::Serialize;
 use std::collections::HashMap;
-
-pub type MappingCollection<T1, T2> = HashMap<T1, T2>;
+use std::hash::BuildHasherDefault;
 
 /// A struct that can be used to calculate the mean and variance
 /// of a stream of weighted tof and scan numbers.
@@ -41,14 +44,14 @@ pub struct ChromatomobilogramStats {
     // In theory we can optimize this to make a single aggregator struct
     // that shares the weight (intensity), since all will have the same weight
     // and retention times.
-    pub scan_tof_mapping: MappingCollection<u32, ScanTofStatsCalculatorPair>,
+    pub scan_tof_mapping: HashMap<u32, ScanTofStatsCalculatorPair, BuildNoHashHasher<u32>>,
     pub id: u64,
 }
 
 impl ChromatomobilogramStats {
     pub fn new(id: u64) -> Self {
         Self {
-            scan_tof_mapping: MappingCollection::new(),
+            scan_tof_mapping: HashMap::with_hasher(BuildHasherDefault::default()),
             id,
         }
     }

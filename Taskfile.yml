@@ -14,14 +14,19 @@ tasks:
     sources:
       - "src/**/*.rs"
     cmds:
-      - task: build
+      - task: bin-build
+      - task: lib-build
       - task: test
       - task: fmt
       - task: clippy
 
-  build:
+  bin-build:
     cmds:
       - cargo build $BIN_EXTRAS
+
+  lib-build:
+    cmds:
+      - cargo build --lib
 
   license_check:
     cmds:
@@ -46,7 +51,6 @@ tasks:
       - task: bench-large-data
 
   bench-build:
-    deps: [build]
     sources:
       - "src/**/*.rs"
     cmds:

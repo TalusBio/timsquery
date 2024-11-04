@@ -105,9 +105,10 @@ fn template_elution_groups(num: usize) -> Vec<ElutionGroup<usize>> {
             id: i as u64,
             rt_seconds: rt,
             mobility,
-            precursor_mz: mz,
-            precursor_charge,
+            precursor_mzs: vec![mz],
             fragment_mzs,
+            expected_framgment_intensity: None,
+            expected_precursor_intensity: None,
         });
     }
     egs
@@ -154,9 +155,7 @@ fn template_tolerance_settings() -> DefaultTolerance {
         // rt: RtTolerance::Absolute((120.0, 120.0)),
         rt: RtTolerance::None,
         mobility: MobilityTolerance::Pct((20.0, 20.0)),
-        quad: QuadTolerance::Absolute((0.1, 0.1, 1)),
-        num_ms1_isotopes: 3,
-        num_ms2_isotopes: 1,
+        quad: QuadTolerance::Absolute((0.1, 0.1)),
     }
 }
 
@@ -309,11 +308,11 @@ pub fn execute_query(
             let index = QuadSplittedTransposedIndex::from_path(&(raw_file_path.clone())).unwrap();
             match aggregator {
                 PossibleAggregator::RawPeakIntensityAggregator => {
-                    let aggregator = RawPeakIntensityAggregator::new;
+                    let aggregator = RawPeakIntensityAggregator::new_with_elution_group;
                     execute_query_inner!(index, aggregator);
                 }
                 PossibleAggregator::RawPeakVectorAggregator => {
-                    let aggregator = RawPeakVectorAggregator::new;
+                    let aggregator = RawPeakVectorAggregator::new_with_elution_group;
                     execute_query_inner!(index, aggregator);
                 }
                 PossibleAggregator::MultiCMGStats => {
@@ -321,7 +320,7 @@ pub fn execute_query(
                         converters: (index.mz_converter, index.im_converter),
                         _phantom: std::marker::PhantomData::<usize>,
                     };
-                    execute_query_inner!(index, |x| factory.build(x));
+                    execute_query_inner!(index, |x| factory.build_with_elution_group(x));
                 }
             }
         }
@@ -329,11 +328,11 @@ pub fn execute_query(
             let index = ExpandedRawFrameIndex::from_path(&(raw_file_path.clone())).unwrap();
             match aggregator {
                 PossibleAggregator::RawPeakIntensityAggregator => {
-                    let aggregator = RawPeakIntensityAggregator::new;
+                    let aggregator = RawPeakIntensityAggregator::new_with_elution_group;
                     execute_query_inner!(index, aggregator);
                 }
                 PossibleAggregator::RawPeakVectorAggregator => {
-                    let aggregator = RawPeakVectorAggregator::new;
+                    let aggregator = RawPeakVectorAggregator::new_with_elution_group;
                     execute_query_inner!(index, aggregator);
                 }
                 PossibleAggregator::MultiCMGStats => {
@@ -341,7 +340,7 @@ pub fn execute_query(
                         converters: (index.mz_converter, index.im_converter),
                         _phantom: std::marker::PhantomData::<usize>,
                     };
-                    execute_query_inner!(index, |x| factory.build(x));
+                    execute_query_inner!(index, |x| factory.build_with_elution_group(x));
                 }
             }
         }

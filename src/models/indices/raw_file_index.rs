@@ -89,7 +89,7 @@ impl RawFileIndex {
     }
 
     fn queries_from_elution_elements_impl<
-        FH: Clone + Eq + Serialize + Hash + Send + Sync + Copy,
+        FH: Clone + Eq + Serialize + Hash + Send + Sync + Copy + std::fmt::Debug,
     >(
         &self,
         tol: &dyn crate::traits::tolerance::Tolerance,
@@ -137,7 +137,7 @@ impl<FH: Hash + Copy + Clone + Serialize + Eq + Debug + Send + Sync>
     }
 }
 
-impl<FH: Hash + Serialize + Eq + Clone + Send + Sync + Copy>
+impl<FH: Hash + Serialize + Eq + Clone + Send + Sync + Copy + std::fmt::Debug>
     ToleranceAdapter<FragmentGroupIndexQuery<FH>, ElutionGroup<FH>> for RawFileIndex
 {
     fn query_from_elution_group(

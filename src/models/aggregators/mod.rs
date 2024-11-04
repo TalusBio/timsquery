@@ -6,7 +6,6 @@ pub use raw_peak_agg::{
     ChromatomobilogramStats,
     MultiCMGStatsAgg,
     MultiCMGStatsFactory,
-    PartitionedCMGArrays,
     RawPeakIntensityAggregator,
     RawPeakVectorAggregator,
 };

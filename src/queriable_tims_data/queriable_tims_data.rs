@@ -63,7 +63,7 @@ where
     QD: QueriableData<QF, AE1, CTX1> + ToleranceAdapter<QF, ElutionGroup<FH>>,
     TL: Tolerance,
     OE: Send + Sync,
-    FH: Clone + Eq + Serialize + Hash + Send + Sync,
+    FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug,
     QF: Send + Sync + ProvidesContext<Context = CTX1>,
     AE1: Into<AE2> + Send + Sync + Clone + Copy,
     AE2: Send + Sync + Clone + Copy + From<AE1>,
@@ -74,7 +74,7 @@ where
     let mut fragment_queries = Vec::with_capacity(elution_groups.len());
     let mut aggregators = Vec::with_capacity(elution_groups.len());
 
-    for (i, elution_group) in elution_groups.iter().enumerate() {
+    for elution_group in elution_groups.iter() {
         let qp = queriable_data.query_from_elution_group(tolerance, elution_group);
 
         fragment_queries.push(qp);

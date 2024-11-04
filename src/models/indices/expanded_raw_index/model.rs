@@ -330,7 +330,7 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
     }
 }
 
-impl<FH: Copy + Clone + Serialize + Eq + Hash + Send + Sync>
+impl<FH: Copy + Clone + Serialize + Eq + Hash + Send + Sync + std::fmt::Debug>
     ToleranceAdapter<FragmentGroupIndexQuery<FH>, ElutionGroup<FH>> for ExpandedRawFrameIndex
 {
     fn query_from_elution_group(

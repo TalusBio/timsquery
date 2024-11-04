@@ -1,3 +1,4 @@
+use crate::models::elution_group;
 use crate::models::frames::raw_peak::RawPeak;
 use crate::traits::aggregator::{
     Aggregator,
@@ -14,6 +15,17 @@ pub struct RawPeakIntensityAggregator {
 impl RawPeakIntensityAggregator {
     pub fn new(id: u64) -> Self {
         Self { id, intensity: 0 }
+    }
+
+    pub fn new_with_elution_group<
+        T: Send + Sync + std::hash::Hash + Clone + Copy + Eq + PartialEq + Serialize + std::fmt::Debug,
+    >(
+        elution_group: &elution_group::ElutionGroup<T>,
+    ) -> Self {
+        Self {
+            id: elution_group.id,
+            intensity: 0,
+        }
     }
 }
 
@@ -48,6 +60,14 @@ impl RawPeakVectorAggregator {
             id,
             peaks: RawPeakVectorArrays::new(),
         }
+    }
+
+    pub fn new_with_elution_group<
+        T: Send + Sync + std::hash::Hash + Clone + Copy + Eq + PartialEq + Serialize + std::fmt::Debug,
+    >(
+        elution_group: &elution_group::ElutionGroup<T>,
+    ) -> Self {
+        Self::new(elution_group.id)
     }
 }
 

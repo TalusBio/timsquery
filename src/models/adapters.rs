@@ -21,7 +21,7 @@ impl From<Metadata> for FragmentIndexAdapter {
     }
 }
 
-impl<FH: Copy + Clone + Serialize + Eq + Hash + Send + Sync>
+impl<FH: Copy + Clone + Serialize + Eq + Hash + Send + Sync + std::fmt::Debug>
     ToleranceAdapter<FragmentGroupIndexQuery<FH>, ElutionGroup<FH>> for FragmentIndexAdapter
 {
     fn query_from_elution_group(
@@ -31,12 +31,11 @@ impl<FH: Copy + Clone + Serialize + Eq + Hash + Send + Sync>
     ) -> FragmentGroupIndexQuery<FH> {
         let rt_range = tol.rt_range(elution_group.rt_seconds);
         let mobility_range = tol.mobility_range(elution_group.mobility);
-        let precursor_mzs =
-            tol.isotope_mzs_mz(elution_group.precursor_mz, elution_group.precursor_charge);
-        let quad_range = tol.quad_range(elution_group.precursor_mz, elution_group.precursor_charge);
+        let quad_range = tol.quad_range(elution_group.get_precursor_mz_limits());
         let quad_range = IncludedRange::new(quad_range.0, quad_range.1);
 
-        let mz_index_ranges = precursor_mzs
+        let mz_index_ranges = elution_group
+            .precursor_mzs
             .iter()
             .map(|mz| {
                 let mz_range = tol.mz_range(*mz);

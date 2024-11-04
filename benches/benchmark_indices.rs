@@ -181,9 +181,10 @@ fn build_elution_groups() -> Vec<ElutionGroup<u64>> {
             id: i as u64,
             rt_seconds: rt,
             mobility,
-            precursor_mz: mz,
-            precursor_charge: 2,
+            precursor_mzs: vec![mz],
             fragment_mzs,
+            expected_framgment_intensity: None,
+            expected_precursor_intensity: None,
         });
     }
     out_egs
@@ -342,17 +343,13 @@ fn run_batch_access_benchmark(raw_file_path: &Path, env_config: EnvConfig) -> Ve
         ms: MzToleramce::Ppm((20.0, 20.0)),
         rt: RtTolerance::Absolute((5.0, 5.0)),
         mobility: MobilityTolerance::Pct((3.0, 3.0)),
-        quad: QuadTolerance::Absolute((0.1, 0.1, 1)),
-        num_ms1_isotopes: 3,
-        num_ms2_isotopes: 1,
+        quad: QuadTolerance::Absolute((0.1, 0.1)),
     };
     let tolerance_with_nort = DefaultTolerance {
         ms: MzToleramce::Ppm((20.0, 20.0)),
         rt: RtTolerance::None,
         mobility: MobilityTolerance::Pct((3.0, 3.0)),
-        quad: QuadTolerance::Absolute((0.1, 0.1, 1)),
-        num_ms1_isotopes: 3,
-        num_ms2_isotopes: 1,
+        quad: QuadTolerance::Absolute((0.1, 0.1)),
     };
     let tolerances = [
         (tolerance_with_rt, "narrow_rt"),
@@ -377,7 +374,7 @@ fn run_batch_access_benchmark(raw_file_path: &Path, env_config: EnvConfig) -> Ve
                     index,
                     &tolerance,
                     &query_groups,
-                    &RawPeakIntensityAggregator::new,
+                    &RawPeakIntensityAggregator::new_with_elution_group,
                 );
                 let tot: u64 = tmp.into_iter().sum();
                 let out = format!("RawFileIndex::query_multi_group aggregated {} ", tot,);
@@ -398,7 +395,7 @@ fn run_batch_access_benchmark(raw_file_path: &Path, env_config: EnvConfig) -> Ve
                     index,
                     &tolerance,
                     &query_groups,
-                    &RawPeakIntensityAggregator::new,
+                    &RawPeakIntensityAggregator::new_with_elution_group,
                 );
                 let tot: u64 = tmp.into_iter().sum();
                 let out = format!(
@@ -422,7 +419,7 @@ fn run_batch_access_benchmark(raw_file_path: &Path, env_config: EnvConfig) -> Ve
                     index,
                     &tolerance,
                     &query_groups,
-                    &RawPeakIntensityAggregator::new,
+                    &RawPeakIntensityAggregator::new_with_elution_group,
                 );
                 let tot: u64 = tmp.into_iter().sum();
                 let out = format!(
@@ -446,7 +443,7 @@ fn run_batch_access_benchmark(raw_file_path: &Path, env_config: EnvConfig) -> Ve
                     index,
                     &tolerance,
                     &query_groups,
-                    &RawPeakIntensityAggregator::new,
+                    &RawPeakIntensityAggregator::new_with_elution_group,
                 );
                 let tot: u64 = tmp.into_iter().sum();
                 let out = format!("TransposedQuadIndex::query_multi_group aggregated {} ", tot,);
@@ -467,7 +464,7 @@ fn run_batch_access_benchmark(raw_file_path: &Path, env_config: EnvConfig) -> Ve
                     index,
                     &tolerance,
                     &query_groups,
-                    &RawPeakIntensityAggregator::new,
+                    &RawPeakIntensityAggregator::new_with_elution_group,
                 );
                 let tot: u64 = tmp.into_iter().sum();
                 let out = format!("TransposedQuadIndex::query_multi_group aggregated {} ", tot,);
