@@ -15,6 +15,7 @@ use crate::models::frames::peak_in_quad::PeakInQuad;
 use crate::models::frames::raw_peak::RawPeak;
 use crate::models::frames::single_quad_settings::{
     get_matching_quad_settings,
+    matches_quad_settings,
     SingleQuadrupoleSetting,
     SingleQuadrupoleSettingIndex,
 };
@@ -407,46 +408,63 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
         AG: Aggregator<Item = A, Output = O, Context = C2>,
         MsLevelContext<usize, FH>: Into<C2>,
     {
-        fragment_queries
-            .par_iter()
-            .zip(aggregator.par_iter_mut())
-            .for_each(|(fragment_query, agg)| {
-                let precursor_mz_range = fragment_query.precursor_query.isolation_mz_range;
-                let precursor_mz_range = IncludedRange::new(
-                    precursor_mz_range.start() as f64,
-                    precursor_mz_range.end() as f64,
-                );
-                assert!(precursor_mz_range.start() > 0.0);
-                let scan_range = Some(fragment_query.precursor_query.mobility_index_range);
-                let local_quad_vec: Vec<SingleQuadrupoleSettingIndex> = self
-                    .get_matching_quad_settings(precursor_mz_range, scan_range)
-                    .collect();
+        let prec_mz_ranges = fragment_queries
+            .iter()
+            .map(|x| {
+                (
+                    x.precursor_query.isolation_mz_range.start() as f64,
+                    x.precursor_query.isolation_mz_range.end() as f64,
+                )
+                    .into()
+            })
+            .collect::<Vec<_>>();
 
-                for (fh, tof_range) in fragment_query.iter_ms1_mzs() {
+        let scan_ranges = fragment_queries
+            .iter()
+            .map(|x| Some(x.precursor_query.mobility_index_range))
+            .collect::<Vec<_>>();
+
+        let rt_ranges = fragment_queries
+            .iter()
+            .map(|x| x.precursor_query.rt_range_seconds)
+            .collect::<Vec<_>>();
+
+        // Query the ms1 mzs first.
+        aggregator.par_iter_mut().enumerate().for_each(|(i, agg)| {
+            fragment_queries[i]
+                .iter_ms1_mzs()
+                .for_each(|(fh, mz_range)| {
                     if agg.supports_context() {
                         agg.set_context(fh.into());
                     }
-                    self.query_ms1_peaks(
-                        tof_range,
-                        scan_range,
-                        Some(fragment_query.precursor_query.rt_range_seconds),
-                        &mut |peak| agg.add(RawPeak::from(peak)),
-                    );
+                    self.query_ms1_peaks(mz_range, scan_ranges[i], Some(rt_ranges[i]), &mut |x| {
+                        agg.add(RawPeak::from(x))
+                    });
+                });
+        });
+
+        for quad_setting in self.flat_quad_settings.iter() {
+            let local_index = quad_setting.index;
+
+            let tqi = self
+                .fragment_indices
+                .get(&local_index)
+                .expect("Only existing quads should be queried.");
+
+            aggregator.par_iter_mut().enumerate().for_each(|(i, agg)| {
+                if !matches_quad_settings(quad_setting, prec_mz_ranges[i], scan_ranges[i]) {
+                    return;
                 }
 
-                for (fh, tof_range) in fragment_query.iter_ms2_mzs() {
+                for (fh, tof_range) in fragment_queries[i].iter_ms2_mzs() {
                     if agg.supports_context() {
                         agg.set_context(fh.into());
                     }
-                    self.query_peaks_in_precursors(
-                        &local_quad_vec,
-                        tof_range,
-                        scan_range,
-                        Some(fragment_query.precursor_query.rt_range_seconds),
-                        &mut |peak| agg.add(RawPeak::from(peak)),
-                    );
+                    tqi.query_peaks(tof_range, scan_ranges[i], Some(rt_ranges[i]))
+                        .for_each(|x| agg.add(RawPeak::from(x)));
                 }
             });
+        }
     }
 }
 

@@ -203,32 +203,29 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
     for ExpandedRawFrameIndex
 {
     fn query(&self, fragment_query: &FragmentGroupIndexQuery<FH>) -> Vec<RawPeak> {
-        todo!();
-        // let precursor_mz_range = (
-        //     fragment_query.precursor_query.isolation_mz_range.0 as f64,
-        //     fragment_query.precursor_query.isolation_mz_range.0 as f64,
-        // );
-        // let scan_range = Some(fragment_query.precursor_query.mobility_index_range);
-        // let frame_index_range = Some(FrameRTTolerance::FrameIndex(
-        //     fragment_query.precursor_query.frame_index_range,
-        // ));
+        let precursor_mz_range = (
+            fragment_query.precursor_query.isolation_mz_range.0 as f64,
+            fragment_query.precursor_query.isolation_mz_range.0 as f64,
+        )
+            .into();
+        let scan_range = Some(fragment_query.precursor_query.mobility_index_range);
 
-        // fragment_query
-        //     .mz_index_ranges
-        //     .iter()
-        //     .flat_map(|(fh, tof_range)| {
-        //         let mut local_vec: Vec<(RawPeak, FH)> = vec![];
-        //         self.query_peaks(
-        //             *tof_range,
-        //             precursor_mz_range,
-        //             scan_range,
-        //             frame_index_range,
-        //             &mut |x| local_vec.push((RawPeak::from(x), *fh)),
-        //         );
+        fragment_query
+            .mz_index_ranges
+            .iter()
+            .flat_map(|(_fh, tof_range)| {
+                let mut local_vec: Vec<RawPeak> = vec![];
+                self.query_peaks(
+                    *tof_range,
+                    precursor_mz_range,
+                    scan_range,
+                    fragment_query.precursor_query.frame_index_range,
+                    &mut |x| local_vec.push(RawPeak::from(x)),
+                );
 
-        //         local_vec
-        //     })
-        //     .collect()
+                local_vec
+            })
+            .collect()
     }
 
     fn add_query<A, O, AG, C2>(
@@ -240,28 +237,24 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
         AG: Aggregator<Item = A, Output = O, Context = C2>,
         MsLevelContext<usize, FH>: Into<C2>,
     {
-        todo!();
-        // let precursor_mz_range = (
-        //     fragment_query.precursor_query.isolation_mz_range.0 as f64,
-        //     fragment_query.precursor_query.isolation_mz_range.0 as f64,
-        // );
-        // let scan_range = Some(fragment_query.precursor_query.mobility_index_range);
-        // let frame_index_range = Some(FrameRTTolerance::FrameIndex(
-        //     fragment_query.precursor_query.frame_index_range,
-        // ));
-
-        // fragment_query
-        //     .mz_index_ranges
-        //     .iter()
-        //     .for_each(|(fh, tof_range)| {
-        //         self.query_peaks(
-        //             *tof_range,
-        //             precursor_mz_range,
-        //             scan_range,
-        //             frame_index_range,
-        //             &mut |peak| aggregator.add(&(RawPeak::from(peak), *fh)),
-        //         );
-        //     })
+        let precursor_mz_range = (
+            fragment_query.precursor_query.isolation_mz_range.0 as f64,
+            fragment_query.precursor_query.isolation_mz_range.0 as f64,
+        )
+            .into();
+        let scan_range = Some(fragment_query.precursor_query.mobility_index_range);
+        fragment_query
+            .mz_index_ranges
+            .iter()
+            .for_each(|(_fh, tof_range)| {
+                self.query_peaks(
+                    *tof_range,
+                    precursor_mz_range,
+                    scan_range,
+                    fragment_query.precursor_query.frame_index_range,
+                    &mut |peak| aggregator.add(RawPeak::from(peak)),
+                );
+            })
     }
 
     fn add_query_multi_group<A, O, AG, C2>(

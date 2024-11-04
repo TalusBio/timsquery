@@ -40,14 +40,38 @@ tasks:
       - cargo clippy {{.CLI_ARGS}}
 
   bench:
+    cmds:
+      - task: bench-build
+      - task: bench-small-data
+      - task: bench-large-data
+
+  bench-build:
+    deps: [build]
     sources:
       - "src/**/*.rs"
     cmds:
       - cargo b --release --features bench --bin benchmark_indices
+
+  bench-small-data:
+    deps: [bench-build]
+    sources:
+      - "src/**/*.rs"
+      - "data/230510_PRTC_13_S1-B1_1_12817.d"
+      - "benches/plot_bench.py"
+
+    cmds:
       - SKIP_SLOW=1 SKIP_BUILD=1 RUST_BACKTRACE=full TIMS_DATA_FILE=./data/230510_PRTC_13_S1-B1_1_12817.d ./target/release/benchmark_indices
       - uv run benches/plot_bench.py data/benchmark_results_230510_PRTC_13_S1-B1_1_12817.json
-      -  # SKIP_SLOW=1 SKIP_BUILD=1 SKIP_HIGHMEM=1 RUST_BACKTRACE=full TIMS_DATA_FILE=./data/LFQ_timsTOFPro_diaPASEF_Condition_A_Sample_Alpha_02.d ./target/release/benchmark_indices
-      -  # uv run benches/plot_bench.py data/benchmark_results_LFQ_timsTOFPro_diaPASEF_Condition_A_Sample_Alpha_02.json
+
+  bench-large-data:
+    deps: [bench-build]
+    sources:
+      - "src/**/*.rs"
+      - "data/LFQ_timsTOFPro_diaPASEF_Condition_A_Sample_Alpha_02.d"
+      - "benches/plot_bench.py"
+    cmds:
+      - SKIP_SLOW=1 SKIP_BUILD=1 SKIP_HIGHMEM=1 RUST_BACKTRACE=full TIMS_DATA_FILE=./data/LFQ_timsTOFPro_diaPASEF_Condition_A_Sample_Alpha_02.d ./target/release/benchmark_indices
+      - uv run benches/plot_bench.py data/benchmark_results_LFQ_timsTOFPro_diaPASEF_Condition_A_Sample_Alpha_02.json
 
   plot:
     sources:
