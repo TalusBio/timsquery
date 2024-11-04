@@ -4,7 +4,12 @@
     "human_id": "TLSDYNIQK_2",
     "mobility": 0.8217308,
     "rt_seconds": 316.72206,
-    "precursor_mz": 541.2797760000001,
+    "precursor_mzs": [
+      541.2797760000001,
+      541.7841080000001,
+      542.28844,
+      542.7927720000001
+    ],
     "precursor_charge": 2,
     "fragment_mzs": {
       "0": 215.13902,
@@ -26,7 +31,12 @@
     "human_id": "TITLEVEPSDTIENVK_2",
     "mobility": 1.1326923,
     "rt_seconds": 745.8906,
-    "precursor_mz": 894.4673760000001,
+    "precursor_mzs": [
+      894.4673760000001,
+      894.971708,
+      895.47604,
+      895.9803720000001
+    ],
     "precursor_charge": 2,
     "fragment_mzs": {
       "0": 215.13902,
@@ -56,7 +66,12 @@
     "human_id": "ESTLHLVLR_2",
     "mobility": 0.8719231,
     "rt_seconds": 483.31707000000006,
-    "precursor_mz": 534.313976,
+    "precursor_mzs": [
+      534.313976,
+      534.818308,
+      535.32264,
+      535.8269720000001
+    ],
     "precursor_charge": 2,
     "fragment_mzs": {
       "0": 217.0819,

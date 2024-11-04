@@ -35,7 +35,8 @@ pub struct PartitionedCMGArrays<FH: Clone + Eq + Serialize + Hash + Send + Sync>
 impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug>
     From<ParitionedCMGAggregator<FH>> for PartitionedCMGArrays<FH>
 {
-    fn from(item: ParitionedCMGAggregator<FH>) -> Self {
+    fn from(mut item: ParitionedCMGAggregator<FH>) -> Self {
+        item.flush_buffer();
         let mut transition_stats = HashMap::new();
         let mut uniq_rts: Vec<u32> = item
             .scan_tof_calc

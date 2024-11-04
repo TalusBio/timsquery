@@ -49,7 +49,7 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug>
         }
     }
 
-    pub fn set_context(&mut self, context: FH) -> Result<()> {
+    pub fn flush_buffer(&mut self) {
         if !self.context_buffer.is_empty() {
             // Swap the buffer with the current one.
             let new_buffer = SparseRTCollection::with_hasher(BuildNoHashHasher::default());
@@ -59,6 +59,10 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug>
                 self.scan_tof_calc[self.context_key_num].as_mut().unwrap(),
             );
         }
+    }
+
+    pub fn set_context(&mut self, context: FH) -> Result<()> {
+        self.flush_buffer();
 
         // Find the position in the keys.
         let pos = self.keys.iter().position(|x| x == &context);

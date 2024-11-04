@@ -8,6 +8,7 @@ import polars as pl
 import json
 
 PROTON_MASS = 1.007276
+NEUTRON_MASS = 1.008664
 
 ub_peptides_df = (
     pl.scan_csv("./results.sage.tsv", separator="\t")
@@ -34,11 +35,11 @@ fragments = (
 )
 
 df = ub_peptides_df.join(fragments, on="psm_id", how="inner")
-df
 
 # Convert to json
 out = []
 for x in df.iter_rows(named=True):
+    mzs = [x["mz"] + (z * (NEUTRON_MASS / x["charge"])) for z in range(4)]
     out.append(
         {
             "id": x["psm_id"],
@@ -46,7 +47,7 @@ for x in df.iter_rows(named=True):
             "mobility": x["ion_mobility"],
             # Note: the rt in sage is minutes ...
             "rt_seconds": x["rt"] * 60,
-            "precursor_mz": x["mz"],
+            "precursor_mzs": mzs,
             "precursor_charge": x["charge"],
             "fragment_mzs": {
                 str(i): y for i, y in enumerate(x["fragment_mz_calculated"])

@@ -1,0 +1,57 @@
+{
+  "settings": {
+    "num_elution_groups": 1000,
+    "num_iterations": 1
+  },
+  "results": [
+    {
+      "name": "RawFileIndex",
+      "context": "BatchAccess_narrow_rt",
+      "mean_duration_seconds": 3.913134625,
+      "mean_duration_human_readable": "3.913134625s",
+      "setup_time_seconds": 0.241788791,
+      "setup_time_human_readable": "241.788791ms",
+      "note": "RawFileIndex::query_multi_group aggregated 8809 "
+    },
+    {
+      "name": "ExpandedRawFileIndexCentroided",
+      "context": "BatchAccess_narrow_rt",
+      "mean_duration_seconds": 0.0037595285112781963,
+      "mean_duration_human_readable": "3.759528ms",
+      "setup_time_seconds": 456.581050083,
+      "setup_time_human_readable": "456.581050083s",
+      "note": "ExpandedRawFileIndexCentroided::query_multi_group aggregated 1570 "
+    },
+    {
+      "name": "ExpandedRawFileIndexCentroided",
+      "context": "BatchAccess_full_rt",
+      "mean_duration_seconds": 11.996143583,
+      "mean_duration_human_readable": "11.996143583s",
+      "setup_time_seconds": 478.673331166,
+      "setup_time_human_readable": "478.673331166s",
+      "note": "ExpandedRawFileIndexCentroided::query_multi_group aggregated 545060194 "
+    },
+    {
+      "name": "TransposedQuadIndexCentroided",
+      "context": "BatchAccess_narrow_rt",
+      "mean_duration_seconds": 0.013009783532467532,
+      "mean_duration_human_readable": "13.009783ms",
+      "setup_time_seconds": 538.791840375,
+      "setup_time_human_readable": "538.791840375s",
+      "note": "TransposedQuadIndex::query_multi_group aggregated 1570 "
+    },
+    {
+      "name": "TransposedQuadIndexCentroided",
+      "context": "BatchAccess_full_rt",
+      "mean_duration_seconds": 0.019372012096153843,
+      "mean_duration_human_readable": "19.372012ms",
+      "setup_time_seconds": 535.971821958,
+      "setup_time_human_readable": "535.971821958s",
+      "note": "TransposedQuadIndex::query_multi_group aggregated 538196860 "
+    }
+  ],
+  "metadata": {
+    "basename": "LFQ_timsTOFPro_diaPASEF_Condition_A_Sample_Alpha_02"
+  },
+  "full_benchmark_time_seconds": 2070.526848583
+}
