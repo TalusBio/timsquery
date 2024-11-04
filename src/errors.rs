@@ -43,6 +43,16 @@ pub enum UnsupportedDataError {
 #[derive(Debug)]
 pub enum DataProcessingError {
     CentroidingError(FrameProcessingConfig),
+    ExpectedVectorLength { real: usize, expected: usize },
+    ExpectedNonEmptyData,
+    InsufficientData { real: usize, expected: usize },
+    ExpectedVectorSameLength(usize, usize),
+}
+
+impl From<DataProcessingError> for TimsqueryError {
+    fn from(e: DataProcessingError) -> Self {
+        TimsqueryError::DataProcessingError(e)
+    }
 }
 
 impl<T: Into<DataReadingError>> From<T> for TimsqueryError {

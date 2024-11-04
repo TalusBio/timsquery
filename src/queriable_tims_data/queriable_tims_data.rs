@@ -68,7 +68,7 @@ where
     AE1: Into<AE2> + Send + Sync + Clone + Copy,
     AE2: Send + Sync + Clone + Copy + From<AE1>,
     CTX1: Into<CTX2> + Send + Sync + Clone + Copy,
-    FF: Fn(u64) -> AG + Send + Sync,
+    FF: Fn(&ElutionGroup<FH>) -> AG + Send + Sync,
 {
     let start = Instant::now();
     let mut fragment_queries = Vec::with_capacity(elution_groups.len());
@@ -78,7 +78,7 @@ where
         let qp = queriable_data.query_from_elution_group(tolerance, elution_group);
 
         fragment_queries.push(qp);
-        aggregators.push(aggregator_factory(i as u64));
+        aggregators.push(aggregator_factory(elution_group));
     }
 
     queriable_data.add_query_multi_group(&fragment_queries, &mut aggregators);

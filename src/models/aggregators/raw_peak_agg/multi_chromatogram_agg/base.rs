@@ -3,17 +3,24 @@ use super::super::chromatogram_agg::{
     MappingCollection,
     ScanTofStatsCalculatorPair,
 };
+use crate::errors::{
+    DataProcessingError,
+    Result,
+};
 use crate::models::aggregators::rolling_calculators::{
     calculate_lazy_hyperscore,
     calculate_value_vs_baseline,
 };
 use crate::models::aggregators::streaming_aggregator::RunningStatsCalculator;
+use crate::utils::correlation::rolling_cosine_similarity;
 use crate::utils::math::lnfact_float;
 use serde::Serialize;
 use std::collections::{
     BTreeMap,
+    HashMap,
     HashSet,
 };
+use std::f64;
 use std::hash::Hash;
 use timsrust::converters::{
     ConvertableDomain,
@@ -54,13 +61,7 @@ pub struct PartitionedCMGScoredStatsArrays<FH: Clone + Eq + Serialize + Hash + S
     pub retention_time_miliseconds: Vec<u32>,
     pub average_mobility: Vec<f64>,
     pub summed_intensity: Vec<u64>,
-    pub npeaks: Vec<usize>,
-    pub lazy_hyperscore: Vec<f64>,
-    pub lazy_hyperscore_vs_baseline: Vec<f64>,
-    pub norm_hyperscore_vs_baseline: Vec<f64>,
-    pub lazyerscore: Vec<f64>,
-    pub lazyerscore_vs_baseline: Vec<f64>,
-    pub norm_lazyerscore_vs_baseline: Vec<f64>,
+    pub scores: ChroimatogramScores,
     pub transition_mobilities: MappingCollection<FH, Vec<f64>>,
     pub transition_mzs: MappingCollection<FH, Vec<f64>>,
     pub transition_intensities: MappingCollection<FH, Vec<u64>>,
@@ -117,18 +118,26 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> ParitionedCMGAggregator<FH
     }
 }
 
-impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> PartitionedCMGScoredStatsArrays<FH> {
-    // TODO: Refactor this function ... its getting pretty big.
-    pub fn new(
-        other: PartitionedCMGArrayStats<FH>,
-        mz_converter: &Tof2MzConverter,
-        mobility_converter: &Scan2ImConverter,
+#[derive(Debug, Clone, Serialize)]
+pub struct ChroimatogramScores {
+    pub lazy_hyperscore: Vec<f64>,
+    pub lazyerscore: Vec<f64>,
+    pub lazy_hyperscore_vs_baseline: Vec<f64>,
+    pub lazyerscore_vs_baseline: Vec<f64>,
+    pub norm_hyperscore_vs_baseline: Vec<f64>,
+    pub norm_lazyerscore_vs_baseline: Vec<f64>,
+    pub npeaks: Vec<usize>,
+}
+
+impl ChroimatogramScores {
+    pub fn new<T: Clone + Eq + Serialize + Hash + Send + Sync>(
+        arrays: &PartitionedCMGArrayStats<T>,
     ) -> Self {
-        let lazy_hyperscore = calculate_lazy_hyperscore(&other.npeaks, &other.summed_intensity);
-        let basline_window_len = 1 + (other.retention_time_miliseconds.len() / 10);
+        let lazy_hyperscore = calculate_lazy_hyperscore(&arrays.npeaks, &arrays.summed_intensity);
+        let basline_window_len = 1 + (arrays.retention_time_miliseconds.len() / 10);
         let lazy_hyperscore_vs_baseline =
             calculate_value_vs_baseline(&lazy_hyperscore, basline_window_len);
-        let lazyerscore: Vec<f64> = other
+        let lazyerscore: Vec<f64> = arrays
             .log_intensity_products
             .iter()
             .map(|x| lnfact_float(*x))
@@ -167,20 +176,49 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> PartitionedCMGScoredStatsA
             .map(|x| x / sd_lazyscore)
             .collect();
 
+        // Make sure all arrays are the same length
+        assert!(
+            lazy_hyperscore_vs_baseline.len() == arrays.retention_time_miliseconds.len(),
+            "Failed sanity check"
+        );
+        assert!(
+            lazyerscore_vs_baseline.len() == arrays.retention_time_miliseconds.len(),
+            "Failed sanity check"
+        );
+
+        ChroimatogramScores {
+            lazy_hyperscore,
+            lazyerscore,
+            lazy_hyperscore_vs_baseline,
+            lazyerscore_vs_baseline,
+            norm_hyperscore_vs_baseline,
+            norm_lazyerscore_vs_baseline,
+            npeaks: arrays.npeaks.to_owned(),
+        }
+    }
+
+    fn get_apex_score_index(&self) -> usize {
         let mut apex_primary_score_index = 0;
         let mut max_primary_score = 0.0f64;
-        let primary_scores = &norm_lazyerscore_vs_baseline;
+        let primary_scores = &self.norm_lazyerscore_vs_baseline;
         for (i, val) in primary_scores.iter().enumerate() {
             if max_primary_score.is_nan() || *val > max_primary_score {
                 max_primary_score = *val;
                 apex_primary_score_index = i;
             }
         }
+        apex_primary_score_index
+    }
+}
 
-        assert!(
-            lazy_hyperscore_vs_baseline.len() == other.retention_time_miliseconds.len(),
-            "Failed sanity check"
-        );
+impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> PartitionedCMGScoredStatsArrays<FH> {
+    pub fn new(
+        other: PartitionedCMGArrayStats<FH>,
+        mz_converter: &Tof2MzConverter,
+        mobility_converter: &Scan2ImConverter,
+    ) -> Self {
+        let scores = ChroimatogramScores::new(&other);
+        let apex_primary_score_index = scores.get_apex_score_index();
 
         PartitionedCMGScoredStatsArrays {
             retention_time_miliseconds: other.retention_time_miliseconds,
@@ -196,7 +234,6 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> PartitionedCMGScoredStatsA
                 })
                 .collect(),
             summed_intensity: other.summed_intensity,
-            npeaks: other.npeaks,
             transition_mobilities: other
                 .scan_index_means
                 .into_iter()
@@ -217,13 +254,8 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> PartitionedCMGScoredStatsA
                 })
                 .collect(),
             transition_intensities: other.intensities,
-            lazy_hyperscore,
-            lazy_hyperscore_vs_baseline,
             apex_primary_score_index,
-            lazyerscore,
-            lazyerscore_vs_baseline,
-            norm_hyperscore_vs_baseline,
-            norm_lazyerscore_vs_baseline,
+            scores,
         }
     }
 }
@@ -335,4 +367,40 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> From<PartitionedCMGArrays<
         out.log_intensity_products = intensity_logsums_tree.into_values().collect();
         out
     }
+}
+
+fn avg_correlation_vs_hashmap<'a, T>(
+    ref_arr: &'a [f64],
+    hm: &'a HashMap<T, Vec<f64>>,
+    window_size: usize,
+) -> Result<Vec<f64>>
+where
+    T: Hash + Eq + Clone,
+{
+    let mut num_added = 0;
+    let mut added = vec![0.0; ref_arr.len()];
+    for target in hm.values() {
+        let res = rolling_cosine_similarity(ref_arr, target, window_size);
+        if res.is_err() {
+            continue;
+        }
+        let res = res.unwrap();
+        for (i, val) in res.iter().enumerate() {
+            if val.is_nan() {
+                continue;
+            }
+            added[i] += val;
+        }
+        num_added += 1;
+    }
+
+    if num_added == 0 {
+        return Err(DataProcessingError::ExpectedNonEmptyData.into());
+    }
+
+    let added_f64 = num_added as f64;
+    for x in added.iter_mut() {
+        *x /= added_f64;
+    }
+    Ok(added)
 }
