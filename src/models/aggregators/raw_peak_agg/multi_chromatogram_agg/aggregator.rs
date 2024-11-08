@@ -2,25 +2,15 @@ use super::super::chromatogram_agg::{
     ChromatomobilogramStatsArrays,
     ScanTofStatsCalculatorPair,
 };
-use crate::errors::{
-    DataProcessingError,
-    Result,
-};
+use crate::errors::Result;
 use crate::utils::correlation::rolling_cosine_similarity;
 use nohash_hasher::BuildNoHashHasher;
 use serde::Serialize;
-use std::collections::{
-    HashMap,
-    HashSet,
-};
-use std::f64;
+use std::collections::HashMap;
 use std::hash::Hash;
-use std::sync::Arc;
 
 type SparseRTCollection = HashMap<u32, ScanTofStatsCalculatorPair, BuildNoHashHasher<u32>>;
 
-// pub uniq_rts: Arc<[u32]>,
-// Move upstream
 #[derive(Debug, Clone)]
 pub struct ParitionedCMGAggregator<
     FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug,
@@ -93,40 +83,4 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug>
 #[derive(Debug, Clone, Serialize)]
 pub struct PartitionedCMGArrays<FH: Clone + Eq + Serialize + Hash + Send + Sync> {
     pub transition_stats: HashMap<FH, ChromatomobilogramStatsArrays>,
-}
-
-fn avg_correlation_vs_hashmap<'a, T>(
-    ref_arr: &'a [f64],
-    hm: &'a HashMap<T, Vec<f64>>,
-    window_size: usize,
-) -> Result<Vec<f64>>
-where
-    T: Hash + Eq + Clone,
-{
-    let mut num_added = 0;
-    let mut added = vec![0.0; ref_arr.len()];
-    for target in hm.values() {
-        let res = rolling_cosine_similarity(ref_arr, target, window_size);
-        if res.is_err() {
-            continue;
-        }
-        let res = res.unwrap();
-        for (i, val) in res.iter().enumerate() {
-            if val.is_nan() {
-                continue;
-            }
-            added[i] += val;
-        }
-        num_added += 1;
-    }
-
-    if num_added == 0 {
-        return Err(DataProcessingError::ExpectedNonEmptyData.into());
-    }
-
-    let added_f64 = num_added as f64;
-    for x in added.iter_mut() {
-        *x /= added_f64;
-    }
-    Ok(added)
 }

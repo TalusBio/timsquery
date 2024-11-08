@@ -118,7 +118,7 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug> Aggregat
     fn set_context(&mut self, context: Self::Context) {
         match &context {
             MsLevelContext::MS1(i) => {
-                self.ms1_stats.set_context(i.clone()).unwrap();
+                self.ms1_stats.set_context(*i).unwrap();
             }
             MsLevelContext::MS2(i) => {
                 self.ms2_stats.set_context(i.clone()).unwrap();

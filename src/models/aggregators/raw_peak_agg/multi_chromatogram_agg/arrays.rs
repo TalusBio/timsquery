@@ -57,7 +57,7 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug>
             let local_id_mapping = local_id_mapping.as_ref().unwrap();
 
             for rt_key in uniq_rts.iter() {
-                let scan_tof_mapping = local_id_mapping.get(&rt_key);
+                let scan_tof_mapping = local_id_mapping.get(rt_key);
                 if let Some(scan_tof_mapping) = scan_tof_mapping {
                     id_cmgs.retention_time_miliseconds.push(*rt_key);
                     id_cmgs

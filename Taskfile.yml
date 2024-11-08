@@ -24,6 +24,13 @@ tasks:
     cmds:
       - cargo build $BIN_EXTRAS
 
+  bin-build-release:
+    deps: [test, fmt]
+    sources:
+      - "src/**/*.rs"
+    cmds:
+      - cargo b --release --features build-binary --bin timsquery
+
   lib-build:
     cmds:
       - cargo build --lib
@@ -78,13 +85,24 @@ tasks:
       - uv run benches/plot_bench.py data/benchmark_results_LFQ_timsTOFPro_diaPASEF_Condition_A_Sample_Alpha_02.json
 
   plot:
+    deps: [bin-build-release]
     sources:
-      - "src/**/*.rs"
       - "data/sageresults/**/*.py"
     cmds:
-      - cargo b --release --features build-binary --bin timsquery
-      - ./target/release/timsquery query-index --raw-file-path ./data/230510_PRTC_13_S1-B1_1_12817.d --tolerance-settings-path "templates/tolerance_settings_narrow_rt.json" --elution-groups-path "./data/sageresults/ubb_elution_groups.json" --output-path "./data/sageresults/query_results" --index expanded-raw-frame-index --aggregator multi-cmg-stats --format pretty-json
-      - cd data/sageresults && uv run plot.py
+      - for: ["expanded-raw-frame-index", "transposed-quad-index"]
+        cmd: ./target/release/timsquery query-index
+          --aggregator multi-cmg-stats --format pretty-json
+          --raw-file-path ./data/230510_PRTC_13_S1-B1_1_12817.d
+          --tolerance-settings-path "templates/tolerance_settings_narrow_rt.json"
+          --elution-groups-path "./data/sageresults/ubb_elution_groups.json"
+          --output-path "./data/sageresults/{{ .ITEM }}_query_results"
+          --index {{ .ITEM }}
+      - for: ["expanded-raw-frame-index", "transposed-quad-index"]
+        cmd: cd data/sageresults &&
+          uv run plot.py
+          --query-results {{ .ITEM }}_query_results/results.json
+          --elution-groups ubb_elution_groups.json
+          --output ubb_peptide_plot{{ .ITEM }}.png
 
   templates:
     sources:

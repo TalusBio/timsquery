@@ -98,7 +98,6 @@ fn template_elution_groups(num: usize) -> Vec<ElutionGroup<usize>> {
         let rt = min_rt + (i as f32 * rt_step);
         let mobility = min_mobility + (i as f32 * mobility_step);
         let mz = min_mz + (i as f64 * mz_step);
-        let precursor_charge = 2;
         let fragment_mzs = (0..10).map(|x| (x as usize, mz + x as f64));
         let fragment_mzs = HashMap::from_iter(fragment_mzs);
         egs.push(ElutionGroup {
