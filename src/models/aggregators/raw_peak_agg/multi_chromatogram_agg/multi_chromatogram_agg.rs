@@ -142,6 +142,7 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug> Aggregat
         let mz_converter = &self.converters.0;
         let mobility_converter = &self.converters.1;
 
+        // TODO clean this up ... 4 conversions in one line is feeling a bit weird.
         let ms1_stats = PartitionedCMGScoredStatsArrays::new(
             PartitionedCMGArrayStats::from(PartitionedCMGArrays::from(self.ms1_stats)),
             mz_converter,

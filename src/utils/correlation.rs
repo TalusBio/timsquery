@@ -5,6 +5,18 @@ use crate::errors::{
     Result,
 };
 
+/// Calculates the cosine similarity between two vectors of the same size.
+///
+/// # Example
+///
+/// ```
+/// use timsquery::utils::correlation::cosine_similarity;
+///
+/// let a = vec![1.0, 2.0, 3.0];
+/// let b = vec![4.0, 5.0, 6.0];
+/// let result = cosine_similarity(&a, &b).unwrap();
+/// assert_eq!(result, 0.9746318461970762);
+/// ```
 pub fn cosine_similarity(a: &[f64], b: &[f64]) -> Result<f64> {
     // Check if vectors have the same length and are not empty
     if a.len() != b.len() || a.is_empty() {
@@ -28,6 +40,33 @@ pub fn cosine_similarity(a: &[f64], b: &[f64]) -> Result<f64> {
     Ok(dot_product / (magnitude_a * magnitude_b))
 }
 
+/// Calculates the cosine similarity at every window for two vectors.
+///
+/// This means that for every window of size `window_size` the cosine similarity
+/// is calculated between the two vectors. (and is padded with f64::NAN)
+/// The output is a vector of the same length as the input.
+///
+/// # Example
+///
+/// ```
+/// use timsquery::utils::correlation::rolling_cosine_similarity;
+///
+/// let a = vec![1.0, 2.0, 3.0, 1.0, 2.0, 3.0, 1.0, 2.0, 3.0];
+/// let b = vec![4.0, 5.0, 6.0, 4.0, 5.0, 6.0, 4.0, 5.0, 6.0];
+/// let expect_res: [f64; 9] = [
+///     f64::NAN,
+///     0.97463184, // Note that this is the same as above
+///     0.97823,
+///     0.95065,
+///     0.97463184, // And this one
+///     0.97823,
+///     0.95065,
+///     0.97463184,
+///     f64::NAN,
+/// ];
+/// let results = rolling_cosine_similarity(&a, &b, 3).unwrap();
+/// assert_eq!(results.len(), expect_res.len());
+/// ```
 pub fn rolling_cosine_similarity(a: &[f64], b: &[f64], window_size: usize) -> Result<Vec<f64>> {
     // Check if vectors have the same length and are long enough for the window
     if a.len() != b.len() {

@@ -3,7 +3,6 @@ use super::super::chromatogram_agg::{
     ScanTofStatsCalculatorPair,
 };
 use crate::errors::Result;
-use crate::utils::correlation::rolling_cosine_similarity;
 use nohash_hasher::BuildNoHashHasher;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -43,11 +42,15 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug>
         if !self.context_buffer.is_empty() {
             // Swap the buffer with the current one.
             let new_buffer = SparseRTCollection::with_hasher(BuildNoHashHasher::default());
-            self.scan_tof_calc[self.context_key_num] = Some(new_buffer);
-            std::mem::swap(
-                &mut self.context_buffer,
-                self.scan_tof_calc[self.context_key_num].as_mut().unwrap(),
-            );
+            if self.scan_tof_calc[self.context_key_num].is_none() {
+                self.scan_tof_calc[self.context_key_num] = Some(new_buffer);
+                std::mem::swap(
+                    &mut self.context_buffer,
+                    self.scan_tof_calc[self.context_key_num].as_mut().unwrap(),
+                );
+            } else {
+                panic!("Same context used multiple times, currently not supported");
+            }
         }
     }
 

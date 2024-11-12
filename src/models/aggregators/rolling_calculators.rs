@@ -57,7 +57,7 @@ pub fn rolling_median<T: PartialOrd + Copy + Clone>(
     out
 }
 
-pub fn calculate_lazy_hyperscore(npeaks: &[usize], summed_intensity: &[u64]) -> Vec<f64> {
+pub fn calculate_lazy_hyperscore(npeaks: &[u8], summed_intensity: &[u64]) -> Vec<f64> {
     let mut scores = vec![0.0; npeaks.len()];
     for i in 0..npeaks.len() {
         let npeaks_i = npeaks[i];

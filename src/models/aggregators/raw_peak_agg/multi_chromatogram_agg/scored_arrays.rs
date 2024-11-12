@@ -22,7 +22,7 @@ pub struct PartitionedCMGScoredStatsArrays<FH: Clone + Eq + Serialize + Hash + S
     pub retention_time_miliseconds: Vec<u32>,
     pub average_mobility: Vec<f64>,
     pub summed_intensity: Vec<u64>,
-    pub scores: ChroimatogramScores,
+    pub scores: ChromatogramScores,
     pub transition_mobilities: HashMap<FH, Vec<f64>>,
     pub transition_mzs: HashMap<FH, Vec<f64>>,
     pub transition_intensities: HashMap<FH, Vec<u64>>,
@@ -30,22 +30,22 @@ pub struct PartitionedCMGScoredStatsArrays<FH: Clone + Eq + Serialize + Hash + S
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ChroimatogramScores {
+pub struct ChromatogramScores {
     pub lazy_hyperscore: Vec<f64>,
     pub lazyerscore: Vec<f64>,
     pub lazy_hyperscore_vs_baseline: Vec<f64>,
     pub lazyerscore_vs_baseline: Vec<f64>,
     pub norm_hyperscore_vs_baseline: Vec<f64>,
     pub norm_lazyerscore_vs_baseline: Vec<f64>,
-    pub npeaks: Vec<usize>,
+    pub npeaks: Vec<u8>,
 }
 
-impl ChroimatogramScores {
+impl ChromatogramScores {
     pub fn new<T: Clone + Eq + Serialize + Hash + Send + Sync>(
         arrays: &PartitionedCMGArrayStats<T>,
     ) -> Self {
         let lazy_hyperscore = calculate_lazy_hyperscore(&arrays.npeaks, &arrays.summed_intensity);
-        let basline_window_len = 1 + (arrays.retention_time_miliseconds.len() / 10);
+        let basline_window_len = 1 + (arrays.retention_time_miliseconds.len() / 20);
         let lazy_hyperscore_vs_baseline =
             calculate_value_vs_baseline(&lazy_hyperscore, basline_window_len);
         let lazyerscore: Vec<f64> = arrays
@@ -97,7 +97,7 @@ impl ChroimatogramScores {
             "Failed sanity check"
         );
 
-        ChroimatogramScores {
+        ChromatogramScores {
             lazy_hyperscore,
             lazyerscore,
             lazy_hyperscore_vs_baseline,
@@ -128,42 +128,47 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> PartitionedCMGScoredStatsA
         mz_converter: &Tof2MzConverter,
         mobility_converter: &Scan2ImConverter,
     ) -> Self {
-        let scores = ChroimatogramScores::new(&other);
+        let scores = ChromatogramScores::new(&other);
         let apex_primary_score_index = scores.get_apex_score_index();
+        let average_mobility = other
+            .weighted_scan_index_mean
+            .into_iter()
+            .map(|x| {
+                let out = mobility_converter.convert(x);
+                if !(0.5..=2.0).contains(&out) {
+                    debug!("Bad mobility value: {:?}, input was {:?}", out, x);
+                }
+                out
+            })
+            .collect();
+
+        let transition_mobilities = other
+            .scan_index_means
+            .into_iter()
+            .map(|(k, v)| {
+                let new_v = v
+                    .into_iter()
+                    .map(|x| mobility_converter.convert(x))
+                    .collect();
+                (k, new_v)
+            })
+            .collect();
+
+        let transition_mzs = other
+            .tof_index_means
+            .into_iter()
+            .map(|(k, v)| {
+                let new_v = v.into_iter().map(|x| mz_converter.convert(x)).collect();
+                (k, new_v)
+            })
+            .collect();
 
         PartitionedCMGScoredStatsArrays {
             retention_time_miliseconds: other.retention_time_miliseconds,
-            average_mobility: other
-                .weighted_scan_index_mean
-                .into_iter()
-                .map(|x| {
-                    let out = mobility_converter.convert(x);
-                    if !(0.5..=2.0).contains(&out) {
-                        debug!("Bad mobility value: {:?}, input was {:?}", out, x);
-                    }
-                    out
-                })
-                .collect(),
+            average_mobility,
             summed_intensity: other.summed_intensity,
-            transition_mobilities: other
-                .scan_index_means
-                .into_iter()
-                .map(|(k, v)| {
-                    let new_v = v
-                        .into_iter()
-                        .map(|x| mobility_converter.convert(x))
-                        .collect();
-                    (k, new_v)
-                })
-                .collect(),
-            transition_mzs: other
-                .tof_index_means
-                .into_iter()
-                .map(|(k, v)| {
-                    let new_v = v.into_iter().map(|x| mz_converter.convert(x)).collect();
-                    (k, new_v)
-                })
-                .collect(),
+            transition_mobilities,
+            transition_mzs,
             transition_intensities: other.intensities,
             apex_primary_score_index,
             scores,

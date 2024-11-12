@@ -16,7 +16,16 @@ ub_peptides_df = (
     .group_by("peptide")
     .agg(pl.all().sort_by("sage_discriminant_score", descending=True).head(1))
     .explode(pl.all().exclude("peptide"))
-    .select(["peptide", "charge", "psm_id", "rt", "ion_mobility", "calcmass"])
+    .select(
+        [
+            "peptide",
+            "charge",
+            "psm_id",
+            "rt",
+            "ion_mobility",
+            "calcmass",
+        ]
+    )
     .with_columns(
         mz=(pl.col("calcmass") + (pl.col("charge") * PROTON_MASS)) / pl.col("charge")
     )
@@ -28,7 +37,14 @@ psm_ids = ub_peptides_df["psm_id"].unique()
 fragments = (
     pl.scan_csv("matched_fragments.sage.tsv", separator="\t")
     .filter(pl.col("psm_id").is_in(psm_ids))
-    .select(["psm_id", "fragment_charge", "fragment_mz_calculated"])
+    .select(
+        [
+            "psm_id",
+            "fragment_charge",
+            "fragment_mz_calculated",
+            "fragment_intensity",
+        ]
+    )
     .group_by(["psm_id"])
     .agg(pl.all())
     .collect()
@@ -40,6 +56,8 @@ df = ub_peptides_df.join(fragments, on="psm_id", how="inner")
 out = []
 for x in df.iter_rows(named=True):
     mzs = [x["mz"] + (z * (NEUTRON_MASS / x["charge"])) for z in range(4)]
+    expected_intensities = {str(i): y for i, y in enumerate(x["fragment_intensity"])}
+
     out.append(
         {
             "id": x["psm_id"],
@@ -52,10 +70,11 @@ for x in df.iter_rows(named=True):
             "fragment_mzs": {
                 str(i): y for i, y in enumerate(x["fragment_mz_calculated"])
             },
+            "expected_fragment_intensity": expected_intensities,
         }
     )
 
-out
+print(out)
 
 with open("ubb_elution_groups.json", "w") as f:
     json.dump(out, f, indent=2)

@@ -54,6 +54,8 @@ impl ChromatomobilogramStats {
     }
 }
 
+/// A struct that calculates stores the mean/sd of an isolation window (transition)
+/// across the chromatogram.
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct ChromatomobilogramStatsArrays {
     pub retention_time_miliseconds: Vec<u32>,
@@ -62,22 +64,13 @@ pub struct ChromatomobilogramStatsArrays {
     pub scan_index_means: Vec<f64>,
     pub scan_index_sds: Vec<f64>,
     pub intensities: Vec<u64>,
+    pub expected_intensity: Option<f64>,
 }
 
 impl ChromatomobilogramStatsArrays {
     // TODO use default instead of new everywhere ..
     pub fn new() -> Self {
         Self::default()
-    }
-
-    pub fn fold(&mut self, other: Self) {
-        self.retention_time_miliseconds
-            .extend(other.retention_time_miliseconds);
-        self.tof_index_means.extend(other.tof_index_means);
-        self.tof_index_sds.extend(other.tof_index_sds);
-        self.scan_index_means.extend(other.scan_index_means);
-        self.scan_index_sds.extend(other.scan_index_sds);
-        self.intensities.extend(other.intensities);
     }
 
     pub fn sort_by_rt(&mut self) {
@@ -95,6 +88,20 @@ impl ChromatomobilogramStatsArrays {
         self.scan_index_means = x.3;
         self.scan_index_sds = x.4;
         self.intensities = x.5;
+    }
+
+    pub fn is_sorted(&self) -> bool {
+        self.retention_time_miliseconds
+            .windows(2)
+            .all(|x| x[0] <= x[1])
+    }
+
+    pub fn len(&self) -> usize {
+        self.retention_time_miliseconds.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.retention_time_miliseconds.is_empty()
     }
 }
 

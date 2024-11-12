@@ -88,6 +88,7 @@ tasks:
     deps: [bin-build-release]
     sources:
       - "data/sageresults/**/*.py"
+      - "src/**/*.rs"
     cmds:
       - for: ["expanded-raw-frame-index", "transposed-quad-index"]
         cmd: ./target/release/timsquery query-index
