@@ -1,9 +1,14 @@
 use super::arrays::PartitionedCMGArrayStats;
+use crate::errors::{
+    DataProcessingError,
+    Result,
+};
 use crate::models::aggregators::rolling_calculators::{
     calculate_lazy_hyperscore,
     calculate_value_vs_baseline,
 };
 use crate::models::aggregators::streaming_aggregator::RunningStatsCalculator;
+use crate::utils::dtw::dtw_max;
 use crate::utils::math::lnfact_float;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -29,6 +34,16 @@ pub struct PartitionedCMGScoredStatsArrays<FH: Clone + Eq + Serialize + Hash + S
     pub apex_primary_score_index: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct ScoresAtTime {
+    pub lazyerscore: f64,
+    pub lazyerscore_vs_baseline: f64,
+    pub norm_lazyerscore_vs_baseline: f64,
+    pub cosine_similarity: f64,
+    pub npeaks: u8,
+    pub retention_time_miliseconds: u32,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ChromatogramScores {
     pub lazy_hyperscore: Vec<f64>,
@@ -38,6 +53,7 @@ pub struct ChromatogramScores {
     pub norm_hyperscore_vs_baseline: Vec<f64>,
     pub norm_lazyerscore_vs_baseline: Vec<f64>,
     pub npeaks: Vec<u8>,
+    pub cosine_similarity: Option<Vec<f64>>,
 }
 
 impl ChromatogramScores {
@@ -105,6 +121,7 @@ impl ChromatogramScores {
             norm_hyperscore_vs_baseline,
             norm_lazyerscore_vs_baseline,
             npeaks: arrays.npeaks.to_owned(),
+            cosine_similarity: arrays.cosine_similarity.to_owned(),
         }
     }
 
@@ -119,6 +136,79 @@ impl ChromatogramScores {
             }
         }
         apex_primary_score_index
+    }
+}
+
+impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug>
+    PartitionedCMGScoredStatsArrays<FH>
+{
+    pub fn index_at_rt(&self, rt_miliseconds: u32) -> usize {
+        let part_point = self
+            .retention_time_miliseconds
+            .partition_point(|x| x < &rt_miliseconds);
+        if part_point == 0 { 0 } else { part_point - 1 }
+    }
+
+    pub fn scores_at_rt(&self, rt_miliseconds: u32) -> ScoresAtTime {
+        let index = self.index_at_rt(rt_miliseconds);
+        let lazyerscore = self.scores.lazyerscore[index];
+        let lazyerscore_vs_baseline = self.scores.lazyerscore_vs_baseline[index];
+        let norm_lazyerscore_vs_baseline = self.scores.norm_lazyerscore_vs_baseline[index];
+        let cosine_similarity = match self.scores.cosine_similarity.as_ref() {
+            Some(x) => x[index],
+            None => 0.0,
+        };
+        let npeaks = self.scores.npeaks[index];
+        let retention_time_miliseconds = self.retention_time_miliseconds[index];
+
+        ScoresAtTime {
+            lazyerscore,
+            lazyerscore_vs_baseline,
+            norm_lazyerscore_vs_baseline,
+            cosine_similarity,
+            npeaks,
+            retention_time_miliseconds,
+        }
+    }
+
+    /// Calculates the cross score between the two partitioned arrays.
+    ///
+    /// USES THE OTHER ARRAYS LAZYERSCORE AND PROJECTS ONTO THE SELF SPACE.
+    ///
+    /// In brief .. it is
+    ///     (self.cosine_similarity * other.cosine_similarity) * other.lazyerscore_vs_baseline
+    ///
+    /// But it projects the 'self' values to the 'other' values.
+    pub fn cross_scores(&self, other: &Self) -> Result<Vec<f64>> {
+        let self_cosine = match self.scores.cosine_similarity.as_ref() {
+            Some(x) => x,
+            None => return Err(DataProcessingError::ExpectedNonEmptyData.into()),
+        };
+        let self_rt = self.retention_time_miliseconds.as_slice();
+        let other_cosine = match other.scores.cosine_similarity.as_ref() {
+            Some(x) => x,
+            None => return Err(DataProcessingError::ExpectedNonEmptyData.into()),
+        };
+        let other_rt = other.retention_time_miliseconds.as_slice();
+        let other_lzb = other.scores.lazyerscore_vs_baseline.as_slice();
+
+        // Should I project self -> other or other -> self?
+        let proj_other_cosine = dtw_max(self_rt, other_rt, other_cosine)?;
+        let proj_other_lzb = dtw_max(self_rt, other_rt, other_lzb)?;
+
+        assert!(proj_other_cosine.len() == proj_other_lzb.len());
+        assert!(proj_other_cosine.len() == self_rt.len());
+
+        let mut out = Vec::with_capacity(proj_other_cosine.len());
+        for (self_cos, (other_cos, other_lzb)) in self_cosine
+            .iter()
+            .zip(proj_other_cosine.iter().zip(proj_other_lzb.iter()))
+        {
+            let score = self_cos * other_cos * other_lzb;
+            out.push(score);
+        }
+
+        Ok(out)
     }
 }
 

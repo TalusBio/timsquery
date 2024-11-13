@@ -56,6 +56,7 @@ df = ub_peptides_df.join(fragments, on="psm_id", how="inner")
 out = []
 for x in df.iter_rows(named=True):
     mzs = [x["mz"] + (z * (NEUTRON_MASS / x["charge"])) for z in range(4)]
+    expected_ms1_intensities = (0.491, 0.334, 0.129, 0.036)
     expected_intensities = {str(i): y for i, y in enumerate(x["fragment_intensity"])}
 
     out.append(
@@ -71,9 +72,12 @@ for x in df.iter_rows(named=True):
                 str(i): y for i, y in enumerate(x["fragment_mz_calculated"])
             },
             "expected_fragment_intensity": expected_intensities,
+            "expected_precursor_intensity": expected_ms1_intensities,
         }
     )
 
+
+out.sort(key=lambda x: x["rt_seconds"])
 print(out)
 
 with open("ubb_elution_groups.json", "w") as f:

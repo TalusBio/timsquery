@@ -125,7 +125,7 @@ fn main_query_index(args: QueryIndexArgs) {
 
     let tolerance_settings: DefaultTolerance =
         serde_json::from_str(&std::fs::read_to_string(&tolerance_settings_path).unwrap()).unwrap();
-    let elution_groups: Vec<ElutionGroup<usize>> =
+    let elution_groups: Vec<ElutionGroup<String>> =
         serde_json::from_str(&std::fs::read_to_string(&elution_groups_path).unwrap()).unwrap();
 
     let index_use = match (index_use, elution_groups.len() > 10) {
@@ -150,10 +150,10 @@ fn main_query_index(args: QueryIndexArgs) {
 
 fn template_tolerance_settings() -> DefaultTolerance {
     DefaultTolerance {
-        ms: MzToleramce::Ppm((50.0, 50.0)),
+        ms: MzToleramce::Ppm((15.0, 15.0)),
         // rt: RtTolerance::Absolute((120.0, 120.0)),
         rt: RtTolerance::None,
-        mobility: MobilityTolerance::Pct((20.0, 20.0)),
+        mobility: MobilityTolerance::Pct((10.0, 10.0)),
         quad: QuadTolerance::Absolute((0.1, 0.1)),
     }
 }
@@ -240,7 +240,7 @@ enum Commands {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ElutionGroupResults<T: Serialize> {
-    elution_group: ElutionGroup<usize>,
+    elution_group: ElutionGroup<String>,
     result: T,
 }
 
@@ -249,7 +249,7 @@ pub fn execute_query(
     aggregator: PossibleAggregator,
     raw_file_path: String,
     tolerance: DefaultTolerance,
-    elution_groups: Vec<ElutionGroup<usize>>,
+    elution_groups: Vec<ElutionGroup<String>>,
     args: QueryIndexArgs,
 ) {
     let output_path = args.output_path;
@@ -317,7 +317,7 @@ pub fn execute_query(
                 PossibleAggregator::MultiCMGStats => {
                     let factory = MultiCMGStatsFactory {
                         converters: (index.mz_converter, index.im_converter),
-                        _phantom: std::marker::PhantomData::<usize>,
+                        _phantom: std::marker::PhantomData::<String>,
                     };
                     execute_query_inner!(index, |x| factory.build_with_elution_group(x));
                 }
@@ -337,7 +337,7 @@ pub fn execute_query(
                 PossibleAggregator::MultiCMGStats => {
                     let factory = MultiCMGStatsFactory {
                         converters: (index.mz_converter, index.im_converter),
-                        _phantom: std::marker::PhantomData::<usize>,
+                        _phantom: std::marker::PhantomData::<String>,
                     };
                     execute_query_inner!(index, |x| factory.build_with_elution_group(x));
                 }

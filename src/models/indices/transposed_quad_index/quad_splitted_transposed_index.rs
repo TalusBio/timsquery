@@ -341,7 +341,7 @@ impl QuadSplittedTransposedIndexBuilder {
     }
 }
 
-impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
+impl<FH: Eq + Hash + Clone + Serialize + Send + Sync>
     QueriableData<FragmentGroupIndexQuery<FH>, RawPeak, MsLevelContext<usize, FH>>
     for QuadSplittedTransposedIndex
 {
@@ -468,7 +468,7 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
     }
 }
 
-impl<FH: Copy + Clone + Serialize + Eq + Hash + Send + Sync + std::fmt::Debug>
+impl<FH: Clone + Serialize + Eq + Hash + Send + Sync + std::fmt::Debug>
     ToleranceAdapter<FragmentGroupIndexQuery<FH>, ElutionGroup<FH>>
     for QuadSplittedTransposedIndex
 {

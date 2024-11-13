@@ -54,9 +54,16 @@ def main(args):
             x["result"]["ms2_stats"]["transition_intensities"].keys()
         )
 
+        rt_plot_center = x["elution_group"]["rt_seconds"] / 60
+        rt_plot_right = rt_plot_center + 0.5
+        rt_plot_left = rt_plot_center - 0.5
+        max_ms1 = 0
+        max_ms2 = 0
+
         for j in sorted_ms1_keys:
             col = next(colors)
             j = x["result"]["ms1_stats"]["transition_intensities"][j]
+            max_ms1 = max(max_ms1, max(j))
             ax[0, i].plot(ms1_rts, j, color=col, alpha=0.4)
             # Draw the points
             ax[0, i].scatter(ms1_rts, j, color=col, s=5)
@@ -64,9 +71,30 @@ def main(args):
         for j in sorted_ms2_keys:
             col = next(colors)
             j = x["result"]["ms2_stats"]["transition_intensities"][j]
+            max_ms2 = max(max_ms2, max(j))
             ax[1, i].plot(ms2_rts, j, color=col, alpha=0.4)
             # Draw the points
             ax[1, i].scatter(ms2_rts, j, color=col, s=5)
+
+        ax[0, i].set_xlim(rt_plot_left, rt_plot_right)
+        ax[1, i].set_xlim(rt_plot_left, rt_plot_right)
+
+        ax[0, i].vlines(
+            rt_plot_center,
+            0,
+            max_ms1,
+            colors="red",
+            linestyles="dashed",
+            alpha=0.3,
+        )
+        ax[1, i].vlines(
+            rt_plot_center,
+            0,
+            max_ms2,
+            colors="red",
+            linestyles="dashed",
+            alpha=0.3,
+        )
 
         # Label axes ...
         ax[0, i].set_xlabel("Retention Time (min)")

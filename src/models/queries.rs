@@ -27,30 +27,44 @@ pub struct PrecursorIndexQuery {
 /// if its an MS1 and maybe something else if its an MS2.
 ///
 /// The aggregator should be able to handle this in its definition.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum MsLevelContext<T1, T2> {
     MS1(T1),
     MS2(T2),
 }
 
 #[derive(Debug, Clone)]
-pub struct FragmentGroupIndexQuery<FH: Clone + Eq + Hash + Send + Sync + Copy> {
+pub struct FragmentGroupIndexQuery<FH: Clone + Eq + Hash + Send + Sync> {
     pub mz_index_ranges: HashMap<FH, IncludedRange<u32>>,
     pub precursor_query: PrecursorIndexQuery,
 }
 
-impl<FH: Clone + Eq + Hash + Send + Sync + Copy> ProvidesContext for FragmentGroupIndexQuery<FH> {
+impl<FH: Clone + Eq + Hash + Send + Sync> ProvidesContext for FragmentGroupIndexQuery<FH> {
     type Context = MsLevelContext<usize, FH>;
 }
 
 #[allow(clippy::from_over_into)]
-impl<FH: Clone + Eq + Hash + Send + Sync + Copy> Into<NoContext> for MsLevelContext<usize, FH> {
+impl Into<NoContext> for MsLevelContext<usize, u64> {
     fn into(self) -> NoContext {
         NoContext {}
     }
 }
 
-impl<FH: Clone + Eq + Hash + Send + Sync + Copy> FragmentGroupIndexQuery<FH> {
+#[allow(clippy::from_over_into)]
+impl Into<NoContext> for MsLevelContext<usize, usize> {
+    fn into(self) -> NoContext {
+        NoContext {}
+    }
+}
+
+#[allow(clippy::from_over_into)]
+impl Into<NoContext> for MsLevelContext<usize, String> {
+    fn into(self) -> NoContext {
+        NoContext {}
+    }
+}
+
+impl<FH: Clone + Eq + Hash + Send + Sync> FragmentGroupIndexQuery<FH> {
     // TODO find if there is a good way to specify in the type that the
     // Only a specific context is returned from each function.
 
@@ -72,7 +86,7 @@ impl<FH: Clone + Eq + Hash + Send + Sync + Copy> FragmentGroupIndexQuery<FH> {
         let out = self
             .mz_index_ranges
             .iter()
-            .map(|(i, mz_range)| (MsLevelContext::MS2(*i), *mz_range));
+            .map(|(i, mz_range)| (MsLevelContext::MS2(i.clone()), *mz_range));
         out
     }
 }

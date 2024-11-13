@@ -66,8 +66,8 @@ where
     FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug,
     QF: Send + Sync + ProvidesContext<Context = CTX1>,
     AE1: Into<AE2> + Send + Sync + Clone + Copy,
-    AE2: Send + Sync + Clone + Copy + From<AE1>,
-    CTX1: Into<CTX2> + Send + Sync + Clone + Copy,
+    AE2: Send + Sync + Clone + From<AE1> + Copy,
+    CTX1: Into<CTX2> + Send + Sync + Clone,
     FF: Fn(&ElutionGroup<FH>) -> AG + Send + Sync,
 {
     let start = Instant::now();

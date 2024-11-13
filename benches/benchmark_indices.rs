@@ -183,7 +183,7 @@ fn build_elution_groups() -> Vec<ElutionGroup<u64>> {
             mobility,
             precursor_mzs: vec![mz],
             fragment_mzs,
-            expected_framgment_intensity: None,
+            expected_fragment_intensity: None,
             expected_precursor_intensity: None,
         });
     }

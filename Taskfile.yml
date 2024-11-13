@@ -94,7 +94,7 @@ tasks:
         cmd: ./target/release/timsquery query-index
           --aggregator multi-cmg-stats --format pretty-json
           --raw-file-path ./data/230510_PRTC_13_S1-B1_1_12817.d
-          --tolerance-settings-path "templates/tolerance_settings_narrow_rt.json"
+          --tolerance-settings-path "templates/tolerance_settings.json"
           --elution-groups-path "./data/sageresults/ubb_elution_groups.json"
           --output-path "./data/sageresults/{{ .ITEM }}_query_results"
           --index {{ .ITEM }}

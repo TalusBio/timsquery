@@ -18,7 +18,7 @@ impl RawPeakIntensityAggregator {
     }
 
     pub fn new_with_elution_group<
-        T: Send + Sync + std::hash::Hash + Clone + Copy + Eq + PartialEq + Serialize + std::fmt::Debug,
+        T: Send + Sync + std::hash::Hash + Clone + Eq + PartialEq + Serialize + std::fmt::Debug,
     >(
         elution_group: &elution_group::ElutionGroup<T>,
     ) -> Self {
@@ -63,7 +63,7 @@ impl RawPeakVectorAggregator {
     }
 
     pub fn new_with_elution_group<
-        T: Send + Sync + std::hash::Hash + Clone + Copy + Eq + PartialEq + Serialize + std::fmt::Debug,
+        T: Send + Sync + std::hash::Hash + Clone + Eq + PartialEq + Serialize + std::fmt::Debug,
     >(
         elution_group: &elution_group::ElutionGroup<T>,
     ) -> Self {

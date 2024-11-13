@@ -42,11 +42,14 @@ fn cosine_sim(expected: &[f64], nested_observed: &[Vec<u64>]) -> Vec<f64> {
     for x in nested_observed.iter() {
         assert!(x.len() == nested_len);
     }
+    if nested_len == 0 {
+        panic!("Expected at least one element in the nested vector");
+    }
 
     let mut buffer = vec![0.0; nested_observed.len()];
     let mut out = Vec::with_capacity(nested_len);
     for rt_i in 0..nested_len {
-        buffer.clear();
+        // buffer.clear();
         for (i, x) in nested_observed.iter().enumerate() {
             buffer[i] = x[rt_i] as f64;
         }

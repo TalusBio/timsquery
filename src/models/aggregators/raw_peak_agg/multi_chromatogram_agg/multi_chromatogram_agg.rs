@@ -5,10 +5,15 @@ use super::arrays::{
     PartitionedCMGArrays,
 };
 use super::scored_arrays::PartitionedCMGScoredStatsArrays;
+use crate::errors::{
+    DataProcessingError,
+    Result,
+};
 use crate::models::elution_group::ElutionGroup;
 use crate::models::frames::raw_peak::RawPeak;
 use crate::models::queries::MsLevelContext;
 use crate::traits::aggregator::Aggregator;
+use crate::utils::dtw::dtw_max;
 use serde::Serialize;
 use std::hash::Hash;
 
@@ -57,10 +62,25 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug> MultiCMG
             .map(|x| x.0)
             .collect();
 
+        let exp_fragment_intensities: Option<Vec<f32>> =
+            if elution_group.expected_fragment_intensity.is_some() {
+                let tmp_expect_inten = elution_group.expected_fragment_intensity.as_ref().unwrap();
+                let out = fragment_keys
+                    .iter()
+                    .map(|x| *(tmp_expect_inten.get(x).unwrap_or(&0.0)))
+                    .collect();
+                Some(out)
+            } else {
+                None
+            };
+
         MultiCMGStatsAgg {
             converters: (self.converters.0, self.converters.1),
-            ms1_stats: ParitionedCMGAggregator::new(precursor_keys),
-            ms2_stats: ParitionedCMGAggregator::new(fragment_keys),
+            ms1_stats: ParitionedCMGAggregator::new(
+                precursor_keys,
+                elution_group.expected_precursor_intensity.to_owned(),
+            ),
+            ms2_stats: ParitionedCMGAggregator::new(fragment_keys, exp_fragment_intensities),
             id: elution_group.id,
             context: None,
             buffer: None,
@@ -81,6 +101,42 @@ pub struct NaturalFinalizedMultiCMGStatsArrays<FH: Clone + Eq + Serialize + Hash
     pub ms1_stats: PartitionedCMGScoredStatsArrays<usize>,
     pub ms2_stats: PartitionedCMGScoredStatsArrays<FH>,
     pub id: u64,
+}
+
+impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug>
+    NaturalFinalizedMultiCMGStatsArrays<FH>
+{
+    pub fn finalized_score(&self) -> Result<Vec<f64>> {
+        let ms1_cosine = match self.ms1_stats.scores.cosine_similarity.as_ref() {
+            Some(x) => x,
+            None => return Err(DataProcessingError::ExpectedNonEmptyData.into()),
+        };
+        let ms1_rt = self.ms1_stats.retention_time_miliseconds.as_slice();
+        let ms2_cosine = match self.ms2_stats.scores.cosine_similarity.as_ref() {
+            Some(x) => x,
+            None => return Err(DataProcessingError::ExpectedNonEmptyData.into()),
+        };
+        let ms2_rt = self.ms2_stats.retention_time_miliseconds.as_slice();
+        let ms2_lzb = self.ms2_stats.scores.lazyerscore_vs_baseline.as_slice();
+
+        // Should I project MS1 -> MS2 or MS2 -> MS1?
+        let proj_mz2_cosine = dtw_max(ms1_rt, ms2_rt, ms2_cosine)?;
+        let proj_mz2_lzb = dtw_max(ms1_rt, ms2_rt, ms2_lzb)?;
+
+        assert!(proj_mz2_cosine.len() == proj_mz2_lzb.len());
+        assert!(proj_mz2_cosine.len() == ms1_rt.len());
+
+        let mut out = Vec::with_capacity(proj_mz2_cosine.len());
+        for (ms1_cos, (ms2_cos, ms2_lzb)) in ms1_cosine
+            .iter()
+            .zip(proj_mz2_cosine.iter().zip(proj_mz2_lzb.iter()))
+        {
+            let score = ms1_cos * ms2_cos * ms2_lzb;
+            out.push(score);
+        }
+
+        Ok(out)
+    }
 }
 
 impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug> Aggregator

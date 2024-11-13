@@ -21,7 +21,7 @@ impl From<Metadata> for FragmentIndexAdapter {
     }
 }
 
-impl<FH: Copy + Clone + Serialize + Eq + Hash + Send + Sync + std::fmt::Debug>
+impl<FH: Clone + Serialize + Eq + Hash + Send + Sync + std::fmt::Debug>
     ToleranceAdapter<FragmentGroupIndexQuery<FH>, ElutionGroup<FH>> for FragmentIndexAdapter
 {
     fn query_from_elution_group(
@@ -85,7 +85,7 @@ impl<FH: Copy + Clone + Serialize + Eq + Hash + Send + Sync + std::fmt::Debug>
             .map(|(k, v)| {
                 let mz_range = tol.mz_range(*v);
                 (
-                    *k,
+                    k.clone(),
                     IncludedRange::new(
                         self.metadata.mz_converter.invert(mz_range.0) as u32,
                         self.metadata.mz_converter.invert(mz_range.1) as u32,

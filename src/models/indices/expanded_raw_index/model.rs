@@ -198,7 +198,7 @@ impl ExpandedRawFrameIndex {
     }
 }
 
-impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
+impl<FH: Eq + Hash + Clone + Serialize + Send + Sync>
     QueriableData<FragmentGroupIndexQuery<FH>, RawPeak, MsLevelContext<usize, FH>>
     for ExpandedRawFrameIndex
 {
@@ -330,7 +330,7 @@ impl<FH: Eq + Hash + Copy + Serialize + Send + Sync>
     }
 }
 
-impl<FH: Copy + Clone + Serialize + Eq + Hash + Send + Sync + std::fmt::Debug>
+impl<FH: Clone + Serialize + Eq + Hash + Send + Sync + std::fmt::Debug>
     ToleranceAdapter<FragmentGroupIndexQuery<FH>, ElutionGroup<FH>> for ExpandedRawFrameIndex
 {
     fn query_from_elution_group(

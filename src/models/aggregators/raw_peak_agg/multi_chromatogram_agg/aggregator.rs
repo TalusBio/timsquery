@@ -24,16 +24,20 @@ pub struct ParitionedCMGAggregator<
 impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug>
     ParitionedCMGAggregator<FH>
 {
-    pub fn new(keys: Vec<FH>) -> Self {
+    pub fn new(keys: Vec<FH>, expected_intensities: Option<Vec<f32>>) -> Self {
         let mut scan_tof_calc = Vec::with_capacity(keys.len());
         for _ in 0..keys.len() {
             scan_tof_calc.push(None);
         }
+        if let Some(exp_intens) = expected_intensities.as_ref() {
+            assert!(exp_intens.len() == keys.len());
+        }
+
         Self {
             scan_tof_calc,
             keys,
             context_key_num: 0,
-            expected_intensities: None,
+            expected_intensities,
             context_buffer: SparseRTCollection::with_hasher(BuildNoHashHasher::default()),
         }
     }
