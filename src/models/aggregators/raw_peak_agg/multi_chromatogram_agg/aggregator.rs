@@ -45,7 +45,7 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug>
     pub fn flush_buffer(&mut self) {
         if !self.context_buffer.is_empty() {
             // Swap the buffer with the current one.
-            let new_buffer = SparseRTCollection::with_hasher(BuildNoHashHasher::default());
+            let mut new_buffer = SparseRTCollection::with_hasher(BuildNoHashHasher::default());
             if self.scan_tof_calc[self.context_key_num].is_none() {
                 self.scan_tof_calc[self.context_key_num] = Some(new_buffer);
                 std::mem::swap(
@@ -53,7 +53,27 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug>
                     self.scan_tof_calc[self.context_key_num].as_mut().unwrap(),
                 );
             } else {
-                panic!("Same context used multiple times, currently not supported");
+                std::mem::swap(&mut self.context_buffer, &mut new_buffer);
+                for (rt, calc) in new_buffer.into_iter() {
+                    self.scan_tof_calc[self.context_key_num]
+                        .as_mut()
+                        .unwrap()
+                        .entry(rt)
+                        .and_modify(|curr| {
+                            curr.add(
+                                calc.weight(),
+                                calc.scan.mean().unwrap() as usize,
+                                calc.tof.mean().unwrap() as u32,
+                            );
+                        })
+                        .or_insert(calc);
+                }
+
+                assert!(self.context_buffer.is_empty());
+                // panic!(
+                //     "Same context used multiple times, currently not supported \ncurr: {:?}, \nkeys: {:?}",
+                //     self.context_key_num, self.keys,
+                // );
             }
         }
     }

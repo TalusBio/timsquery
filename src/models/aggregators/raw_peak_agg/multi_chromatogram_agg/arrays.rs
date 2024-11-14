@@ -37,10 +37,20 @@ pub struct PartitionedCMGArrays<FH: Clone + Eq + Serialize + Hash + Send + Sync>
 }
 
 fn cosine_sim(expected: &[f64], nested_observed: &[Vec<u64>]) -> Vec<f64> {
-    assert!(expected.len() == nested_observed.len());
+    assert!(
+        expected.len() == nested_observed.len(),
+        "Expected and observed have different lengths {:?} {:?}",
+        expected.len(),
+        nested_observed.len(),
+    );
     let nested_len = nested_observed[0].len();
     for x in nested_observed.iter() {
-        assert!(x.len() == nested_len);
+        assert!(
+            x.len() == nested_len,
+            "Nested observed vectors have different lengths {:?} {:?}",
+            x.len(),
+            nested_len,
+        );
     }
     if nested_len == 0 {
         panic!("Expected at least one element in the nested vector");
@@ -73,12 +83,16 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug>
             .collect();
         uniq_rts.sort_unstable();
         uniq_rts.dedup();
+        let mut out_expected_intensities: Vec<f32> = Vec::with_capacity(item.keys.len());
 
         for (id_ind, _id_key) in item.keys.iter().enumerate() {
             let mut id_cmgs = ChromatomobilogramStatsArrays::new();
             let local_id_mapping = &item.scan_tof_calc[id_ind];
             if local_id_mapping.is_none() {
                 continue;
+            }
+            if item.expected_intensities.is_some() {
+                out_expected_intensities.push(item.expected_intensities.as_ref().unwrap()[id_ind]);
             }
             let local_id_mapping = local_id_mapping.as_ref().unwrap();
 
@@ -105,10 +119,16 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug>
             transition_stats.push(id_cmgs);
         }
 
+        let out_expected_intensities = if out_expected_intensities.is_empty() {
+            None
+        } else {
+            Some(out_expected_intensities)
+        };
+
         Self {
             transition_stats,
             transition_keys: item.keys,
-            expected_intensities: item.expected_intensities,
+            expected_intensities: out_expected_intensities,
         }
     }
 }

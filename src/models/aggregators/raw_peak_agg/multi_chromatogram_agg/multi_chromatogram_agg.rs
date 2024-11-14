@@ -4,16 +4,15 @@ use super::arrays::{
     PartitionedCMGArrayStats,
     PartitionedCMGArrays,
 };
-use super::scored_arrays::PartitionedCMGScoredStatsArrays;
-use crate::errors::{
-    DataProcessingError,
-    Result,
+use super::scored_arrays::{
+    PartitionedCMGScoredStatsArrays,
+    ScoresAtTime,
 };
+use crate::errors::Result;
 use crate::models::elution_group::ElutionGroup;
 use crate::models::frames::raw_peak::RawPeak;
 use crate::models::queries::MsLevelContext;
 use crate::traits::aggregator::Aggregator;
-use crate::utils::dtw::dtw_max;
 use serde::Serialize;
 use std::hash::Hash;
 
@@ -100,41 +99,44 @@ pub struct MultiCMGArrayStats<FH: Clone + Eq + Serialize + Hash + Send + Sync> {
 pub struct NaturalFinalizedMultiCMGStatsArrays<FH: Clone + Eq + Serialize + Hash + Send + Sync> {
     pub ms1_stats: PartitionedCMGScoredStatsArrays<usize>,
     pub ms2_stats: PartitionedCMGScoredStatsArrays<FH>,
+    pub cross_ms1: Vec<f64>,
+    pub cross_ms2: Vec<f64>,
     pub id: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ApexScores {
+    pub ms1_scores: ScoresAtTime,
+    pub ms2_scores: ScoresAtTime,
+    pub main_score: f64,
 }
 
 impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug>
     NaturalFinalizedMultiCMGStatsArrays<FH>
 {
-    pub fn finalized_score(&self) -> Result<Vec<f64>> {
-        let ms1_cosine = match self.ms1_stats.scores.cosine_similarity.as_ref() {
-            Some(x) => x,
-            None => return Err(DataProcessingError::ExpectedNonEmptyData.into()),
-        };
-        let ms1_rt = self.ms1_stats.retention_time_miliseconds.as_slice();
-        let ms2_cosine = match self.ms2_stats.scores.cosine_similarity.as_ref() {
-            Some(x) => x,
-            None => return Err(DataProcessingError::ExpectedNonEmptyData.into()),
-        };
-        let ms2_rt = self.ms2_stats.retention_time_miliseconds.as_slice();
-        let ms2_lzb = self.ms2_stats.scores.lazyerscore_vs_baseline.as_slice();
-
-        // Should I project MS1 -> MS2 or MS2 -> MS1?
-        let proj_mz2_cosine = dtw_max(ms1_rt, ms2_rt, ms2_cosine)?;
-        let proj_mz2_lzb = dtw_max(ms1_rt, ms2_rt, ms2_lzb)?;
-
-        assert!(proj_mz2_cosine.len() == proj_mz2_lzb.len());
-        assert!(proj_mz2_cosine.len() == ms1_rt.len());
-
-        let mut out = Vec::with_capacity(proj_mz2_cosine.len());
-        for (ms1_cos, (ms2_cos, ms2_lzb)) in ms1_cosine
+    pub fn finalized_score(&self) -> Result<ApexScores> {
+        let main_score = self.cross_ms2.as_slice();
+        let main_score_rts = self.ms1_stats.retention_time_miliseconds.as_slice();
+        let apex_cross_ms2_index = main_score
             .iter()
-            .zip(proj_mz2_cosine.iter().zip(proj_mz2_lzb.iter()))
-        {
-            let score = ms1_cos * ms2_cos * ms2_lzb;
-            out.push(score);
-        }
+            .enumerate()
+            .max_by(|x, y| x.1.partial_cmp(y.1).unwrap())
+            .unwrap();
 
+        let apex_rt = main_score_rts[apex_cross_ms2_index.0];
+
+        let ms1_scores = self.ms1_stats.scores_at_rt(apex_rt);
+        let ms2_scores = self.ms2_stats.scores_at_rt(apex_rt);
+
+        let out = ApexScores {
+            ms1_scores,
+            ms2_scores,
+            main_score: *apex_cross_ms2_index.1,
+        };
+
+        if out.main_score.is_infinite() {
+            panic!("Main score is infinite, main_score: {:?}", main_score);
+        }
         Ok(out)
     }
 }
@@ -210,9 +212,14 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug> Aggregat
             mobility_converter,
         );
 
+        let cross_ms1 = ms2_stats.cross_scores(&ms1_stats).unwrap_or(vec![]);
+        let cross_ms2 = ms1_stats.cross_scores(&ms2_stats).unwrap_or(vec![]);
+
         NaturalFinalizedMultiCMGStatsArrays {
             ms2_stats,
             ms1_stats,
+            cross_ms1,
+            cross_ms2,
             id: self.id,
         }
     }

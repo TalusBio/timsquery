@@ -179,7 +179,10 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug>
     ///     (self.cosine_similarity * other.cosine_similarity) * other.lazyerscore_vs_baseline
     ///
     /// But it projects the 'self' values to the 'other' values.
-    pub fn cross_scores(&self, other: &Self) -> Result<Vec<f64>> {
+    pub fn cross_scores<T: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug>(
+        &self,
+        other: &PartitionedCMGScoredStatsArrays<T>,
+    ) -> Result<Vec<f64>> {
         let self_cosine = match self.scores.cosine_similarity.as_ref() {
             Some(x) => x,
             None => return Err(DataProcessingError::ExpectedNonEmptyData.into()),
@@ -204,8 +207,29 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug>
             .iter()
             .zip(proj_other_cosine.iter().zip(proj_other_lzb.iter()))
         {
+            // TODO fix this a layer deeper ...
+            // maybe two ... 1. Either prevent needing to wrap the extensions by having
+            // The aggregator map to the closest cycle, rather than the frame.
+            // 2. Fix the wrapping to not generate -inf values.
             let score = self_cos * other_cos * other_lzb;
+            if score.is_infinite() {
+                out.push(0.0);
+                continue;
+            }
             out.push(score);
+        }
+
+        // Check if there are infinite values
+        if out.iter().any(|x| x.is_infinite()) {
+            let infinite_indices = out
+                .iter()
+                .enumerate()
+                .filter(|(_, x)| x.is_infinite())
+                .collect::<Vec<_>>();
+            panic!(
+                "Cross scores contain infinite values at indices: \n\n>>> {:?}",
+                infinite_indices,
+            );
         }
 
         Ok(out)
