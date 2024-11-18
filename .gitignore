@@ -2,4 +2,9 @@
 /templates
 /tmp
 .env
+.task/
 results.json
+
+**/.DS_Store
+*.code-workspace
+
