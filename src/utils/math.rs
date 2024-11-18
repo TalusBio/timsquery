@@ -18,3 +18,12 @@ pub fn lnfact_float(n: f64) -> f64 {
         n * n.ln() - n + 0.5 * n.ln() + 0.5 * (std::f64::consts::PI * 2.0 * n).ln()
     }
 }
+
+/// Logarigthmic mean of a slice of values.
+pub fn lnmean(vals: &[f64]) -> f64 {
+    let mut sum = 0.0;
+    for val in vals {
+        sum += val.ln();
+    }
+    (sum / vals.len() as f64).exp()
+}

@@ -1,5 +1,9 @@
 use crate::models::elution_group::ElutionGroup;
-use crate::models::queries::{FragmentGroupIndexQuery, PrecursorIndexQuery};
+use crate::models::queries::{
+    FragmentGroupIndexQuery,
+    PrecursorIndexQuery,
+};
+use crate::utils::tolerance_ranges::IncludedRange;
 use crate::ToleranceAdapter;
 use serde::Serialize;
 use std::hash::Hash;
@@ -17,7 +21,7 @@ impl From<Metadata> for FragmentIndexAdapter {
     }
 }
 
-impl<FH: Copy + Clone + Serialize + Eq + Hash + Send + Sync>
+impl<FH: Clone + Serialize + Eq + Hash + Send + Sync + std::fmt::Debug>
     ToleranceAdapter<FragmentGroupIndexQuery<FH>, ElutionGroup<FH>> for FragmentIndexAdapter
 {
     fn query_from_elution_group(
@@ -27,13 +31,20 @@ impl<FH: Copy + Clone + Serialize + Eq + Hash + Send + Sync>
     ) -> FragmentGroupIndexQuery<FH> {
         let rt_range = tol.rt_range(elution_group.rt_seconds);
         let mobility_range = tol.mobility_range(elution_group.mobility);
-        let precursor_mz_range = tol.mz_range(elution_group.precursor_mz);
-        let quad_range = tol.quad_range(elution_group.precursor_mz, elution_group.precursor_charge);
+        let quad_range = tol.quad_range(elution_group.get_precursor_mz_limits());
+        let quad_range = IncludedRange::new(quad_range.0, quad_range.1);
 
-        let mz_index_range = (
-            self.metadata.mz_converter.invert(precursor_mz_range.0) as u32,
-            self.metadata.mz_converter.invert(precursor_mz_range.1) as u32,
-        );
+        let mz_index_ranges = elution_group
+            .precursor_mzs
+            .iter()
+            .map(|mz| {
+                let mz_range = tol.mz_range(*mz);
+                IncludedRange::new(
+                    self.metadata.mz_converter.invert(mz_range.0) as u32,
+                    self.metadata.mz_converter.invert(mz_range.1) as u32,
+                )
+            })
+            .collect();
         let mobility_range = match mobility_range {
             Some(mobility_range) => mobility_range,
             None => (self.metadata.lower_im as f32, self.metadata.upper_im as f32),
@@ -46,16 +57,16 @@ impl<FH: Copy + Clone + Serialize + Eq + Hash + Send + Sync>
             Some(rt_range) => rt_range,
             None => (self.metadata.lower_rt as f32, self.metadata.upper_rt as f32),
         };
-        let frame_index_range = (
-            self.metadata.rt_converter.invert(rt_range.0) as usize,
-            self.metadata.rt_converter.invert(rt_range.1) as usize,
+        let rt_range = IncludedRange::new(rt_range.0, rt_range.1);
+        let frame_index_range = IncludedRange::new(
+            self.metadata.rt_converter.invert(rt_range.start()) as usize,
+            self.metadata.rt_converter.invert(rt_range.end()) as usize,
         );
 
-        assert!(frame_index_range.0 <= frame_index_range.1);
-        assert!(mz_index_range.0 <= mz_index_range.1);
+        assert!(frame_index_range.start() <= frame_index_range.end());
         // Since mobilities get mixed up bc low scan ranges are high 1/k0, I
         // Just make sure they are sorted here.
-        let mobility_index_range = (
+        let mobility_index_range = IncludedRange::new(
             mobility_index_range.0.min(mobility_index_range.1),
             mobility_index_range.1.max(mobility_index_range.0),
         );
@@ -63,7 +74,7 @@ impl<FH: Copy + Clone + Serialize + Eq + Hash + Send + Sync>
         let precursor_query = PrecursorIndexQuery {
             frame_index_range,
             rt_range_seconds: rt_range,
-            mz_index_range,
+            mz_index_ranges,
             mobility_index_range,
             isolation_mz_range: quad_range,
         };
@@ -74,8 +85,8 @@ impl<FH: Copy + Clone + Serialize + Eq + Hash + Send + Sync>
             .map(|(k, v)| {
                 let mz_range = tol.mz_range(*v);
                 (
-                    *k,
-                    (
+                    k.clone(),
+                    IncludedRange::new(
                         self.metadata.mz_converter.invert(mz_range.0) as u32,
                         self.metadata.mz_converter.invert(mz_range.1) as u32,
                     ),

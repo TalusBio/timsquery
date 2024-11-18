@@ -1,5 +1,8 @@
 use core::f32;
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize,
+    Serialize,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MzToleramce {
@@ -23,9 +26,10 @@ pub enum MobilityTolerance {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum QuadTolerance {
-    Absolute((f32, f32, u8)),
+    Absolute((f32, f32)),
 }
 
+// TODO: Rename to something that does not use the 'Default'
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DefaultTolerance {
     pub ms: MzToleramce,
@@ -40,7 +44,7 @@ impl Default for DefaultTolerance {
             ms: MzToleramce::Ppm((20.0, 20.0)),
             rt: RtTolerance::Absolute((5.0, 5.0)),
             mobility: MobilityTolerance::Pct((3.0, 3.0)),
-            quad: QuadTolerance::Absolute((0.1, 0.1, 1)),
+            quad: QuadTolerance::Absolute((0.1, 0.1)),
         }
     }
 }
@@ -49,7 +53,7 @@ pub trait Tolerance {
     fn mz_range(&self, mz: f64) -> (f64, f64);
     fn rt_range(&self, rt: f32) -> Option<(f32, f32)>;
     fn mobility_range(&self, mobility: f32) -> Option<(f32, f32)>;
-    fn quad_range(&self, precursor_mz: f64, precursor_charge: u8) -> (f32, f32);
+    fn quad_range(&self, precursor_mz_range: (f64, f64)) -> (f32, f32);
 }
 
 impl Tolerance for DefaultTolerance {
@@ -64,6 +68,7 @@ impl Tolerance for DefaultTolerance {
         }
     }
 
+    // TODO add an unit ...
     fn rt_range(&self, rt: f32) -> Option<(f32, f32)> {
         match self.rt {
             RtTolerance::Absolute((low, high)) => Some((rt - low, rt + high)),
@@ -88,24 +93,17 @@ impl Tolerance for DefaultTolerance {
         }
     }
 
-    fn quad_range(&self, precursor_mz: f64, precursor_charge: u8) -> (f32, f32) {
-        // Should this be a recoverable error?
-        if precursor_charge == 0 {
-            panic!("Precursor charge is 0, inputs: self: {:?}, precursor_mz: {:?}, precursor_charge: {:?}", self, precursor_mz, precursor_charge);
-        };
+    fn quad_range(&self, precursor_mz_range: (f64, f64)) -> (f32, f32) {
         match self.quad {
-            QuadTolerance::Absolute((low, high, num_isotopes)) => {
-                let max_offset = (1.0 / precursor_charge as f32) * num_isotopes as f32;
-                let f32_mz = precursor_mz as f32;
-                let mz_low = f32_mz - low - max_offset;
-                let mz_high = f32_mz + high + max_offset;
+            QuadTolerance::Absolute((low, high)) => {
+                let mz_low = precursor_mz_range.0.min(precursor_mz_range.1) as f32 - low;
+                let mz_high = precursor_mz_range.1.max(precursor_mz_range.0) as f32 + high;
                 assert!(mz_low <= mz_high);
                 assert!(
                     mz_low > 0.0,
-                    "Precursor mz is 0 or less, inputs: self: {:?}, precursor_mz: {:?}, precursor_charge: {:?}",
+                    "Precursor mz is 0 or less, inputs: self: {:?}, precursor_mz_range: {:?}",
                     self,
-                    precursor_mz,
-                    precursor_charge
+                    precursor_mz_range,
                 );
                 (mz_low, mz_high)
             }

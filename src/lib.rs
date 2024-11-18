@@ -5,7 +5,10 @@ pub use crate::models::indices::transposed_quad_index::QuadSplittedTransposedInd
 // Re-export traits
 pub use crate::traits::aggregator::Aggregator;
 pub use crate::traits::queriable_data::QueriableData;
-pub use crate::traits::tolerance::{Tolerance, ToleranceAdapter};
+pub use crate::traits::tolerance::{
+    Tolerance,
+    ToleranceAdapter,
+};
 
 // Declare modules
 pub mod errors;
@@ -15,4 +18,8 @@ pub mod traits;
 pub mod utils;
 
 // Re-export errors
-pub use crate::errors::{DataProcessingError, DataReadingError, TimsqueryError};
+pub use crate::errors::{
+    DataProcessingError,
+    DataReadingError,
+    TimsqueryError,
+};

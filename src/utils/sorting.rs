@@ -21,7 +21,6 @@
 /// assert_eq!(out.1, vec![3, 2, 1]);
 /// assert_eq!(out.2, vec!['c', 'b', 'a']);
 /// ```
-///
 #[macro_export]
 macro_rules! sort_vecs_by_first {
     ($first:expr $(,$rest:expr)*) => {{

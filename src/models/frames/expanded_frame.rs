@@ -1,22 +1,49 @@
 use super::peak_in_quad::PeakInQuad;
 use super::single_quad_settings::{
-    expand_quad_settings, ExpandedFrameQuadSettings, SingleQuadrupoleSetting,
+    expand_quad_settings,
+    ExpandedFrameQuadSettings,
+    SingleQuadrupoleSetting,
 };
-use crate::errors::{Result, UnsupportedDataError};
+use crate::errors::{
+    Result,
+    UnsupportedDataError,
+};
 use crate::sort_vecs_by_first;
 use crate::utils::compress_explode::explode_vec;
-use crate::utils::frame_processing::{lazy_centroid_weighted_frame, PeakArrayRefs};
+use crate::utils::frame_processing::{
+    lazy_centroid_weighted_frame,
+    PeakArrayRefs,
+};
 use crate::utils::sorting::top_n;
-use crate::utils::tolerance_ranges::{scan_tol_range, tof_tol_range};
+use crate::utils::tolerance_ranges::{
+    scan_tol_range,
+    tof_tol_range,
+    IncludedRange,
+};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use timsrust::converters::{Scan2ImConverter, Tof2MzConverter};
-use timsrust::readers::{FrameReader, FrameReaderError};
-use timsrust::{AcquisitionType, Frame, MSLevel, QuadrupoleSettings};
-use tracing::instrument;
-use tracing::{info, trace, warn};
+use timsrust::converters::{
+    Scan2ImConverter,
+    Tof2MzConverter,
+};
+use timsrust::readers::{
+    FrameReader,
+    FrameReaderError,
+};
+use timsrust::{
+    AcquisitionType,
+    Frame,
+    MSLevel,
+    QuadrupoleSettings,
+};
+use tracing::{
+    info,
+    instrument,
+    trace,
+    warn,
+};
 
 /// A frame after expanding the mobility data and re-sorting it by tof.
 #[derive(Debug, Clone)]
@@ -108,26 +135,23 @@ impl<T: SortingStateTrait> ExpandedFrameSlice<T> {
 impl ExpandedFrameSlice<SortedState> {
     pub fn query_peaks<F>(
         &self,
-        tof_range: (u32, u32),
-        scan_range: Option<(usize, usize)>,
+        tof_range: IncludedRange<u32>,
+        scan_range: Option<IncludedRange<usize>>,
         f: &mut F,
     ) where
         F: FnMut(PeakInQuad),
     {
+        // TODO abstract this operation... Range -> Range
         let peak_range = {
-            let peak_ind_start = self.tof_indices.partition_point(|x| x < &tof_range.0);
-            let peak_ind_end = self.tof_indices.partition_point(|x| x <= &tof_range.1);
+            let peak_ind_start = self.tof_indices.partition_point(|x| *x < tof_range.start());
+            let peak_ind_end = self.tof_indices.partition_point(|x| *x <= tof_range.end());
             peak_ind_start..peak_ind_end
         };
 
-        if let Some((min_scan, max_scan)) = scan_range {
-            assert!(min_scan <= max_scan);
-        }
-
         for peak_ind in peak_range {
             let scan_index = self.scan_numbers[peak_ind];
-            if let Some((min_scan, max_scan)) = scan_range {
-                if scan_index < min_scan || scan_index > max_scan {
+            if let Some(scan_range) = &scan_range {
+                if !scan_range.contains(scan_index) {
                     continue;
                 }
             }
@@ -459,7 +483,7 @@ pub struct ExpandedQuadSliceInfo {
 }
 
 impl ExpandedQuadSliceInfo {
-    #[instrument(skip(frameslices), ret)]
+    #[instrument(skip(frameslices), ret, level = "debug")]
     pub fn new(frameslices: &[ExpandedFrameSlice<SortedState>]) -> Self {
         let avg_cycle_time = frameslices
             .windows(2)
@@ -491,8 +515,6 @@ impl ExpandedQuadSliceInfo {
     ///    the intensity of the peak drops under 1% of its intensity.
     /// 4. The time difference between the forward and backward point is the peak width.
     /// 5. Finds the median of the peak widths.
-    ///
-    ///
     fn estimate_peak_width(frameslices: &[ExpandedFrameSlice<SortedState>]) -> Option<f64> {
         let start_idx = frameslices.len() / 5;
         let end_idx = frameslices.len() * 4 / 5;
@@ -510,7 +532,6 @@ impl ExpandedQuadSliceInfo {
             max_rt: f64,
             min_rt: f64,
             intensity: u32,
-            local_frame_index: usize,
             fwdone: bool,
             bwdone: bool,
             any_update: bool,
@@ -536,11 +557,7 @@ impl ExpandedQuadSliceInfo {
                 .filter_map(|x| {
                     let a = x[0];
                     let b = x[1];
-                    if a.abs_diff(b) > 5 {
-                        Some(a)
-                    } else {
-                        None
-                    }
+                    if a.abs_diff(b) > 5 { Some(a) } else { None }
                 })
                 .collect();
 
@@ -548,7 +565,7 @@ impl ExpandedQuadSliceInfo {
                 .iter()
                 .map(|tof| {
                     let mut local_inten = 0u32;
-                    local_frame.query_peaks((tof - 1, tof + 1), None, &mut |x| {
+                    local_frame.query_peaks(IncludedRange::new(tof - 1, tof + 1), None, &mut |x| {
                         local_inten += x.intensity
                     });
                     assert!(local_inten > 0);
@@ -558,7 +575,6 @@ impl ExpandedQuadSliceInfo {
                         max_rt: local_rt,
                         min_rt: local_rt,
                         intensity: local_inten,
-                        local_frame_index: local_idx,
                         fwdone: false,
                         bwdone: false,
                         any_update: false,
@@ -575,9 +591,11 @@ impl ExpandedQuadSliceInfo {
                         continue;
                     }
                     let mut local_int = 0u32;
-                    lookup_frame.query_peaks((peak.tof - 1, peak.tof + 1), None, &mut |x| {
-                        local_int += x.intensity
-                    });
+                    lookup_frame.query_peaks(
+                        IncludedRange::new(peak.tof - 1, peak.tof + 1),
+                        None,
+                        &mut |x| local_int += x.intensity,
+                    );
                     if local_int > (peak.intensity / 100) {
                         peak.max_rt = local_rt;
                         peak.patience = 1;
@@ -612,9 +630,11 @@ impl ExpandedQuadSliceInfo {
                         continue;
                     }
                     let mut local_int = 0;
-                    lookup_frame.query_peaks((peak.tof - 1, peak.tof + 1), None, &mut |x| {
-                        local_int += x.intensity
-                    });
+                    lookup_frame.query_peaks(
+                        IncludedRange::new(peak.tof - 1, peak.tof + 1),
+                        None,
+                        &mut |x| local_int += x.intensity,
+                    );
 
                     if local_int > (peak.intensity / 100) {
                         peak.min_rt = local_rt;
@@ -687,9 +707,7 @@ pub fn par_expand_and_centroid_frames(
                 let end_peaks: usize = centroided.iter().map(|x| x.len()).sum();
                 trace!(
                     "Peak counts for quad {:?}: raw={}/centroid={}",
-                    qs,
-                    start_peaks,
-                    end_peaks
+                    qs, start_peaks, end_peaks
                 );
                 (qs, centroided)
             })

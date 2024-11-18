@@ -1,22 +1,40 @@
-use clap::{Parser, Subcommand};
-use serde::{Deserialize, Serialize};
+use clap::{
+    Parser,
+    Subcommand,
+};
+use serde::{
+    Deserialize,
+    Serialize,
+};
 use std::collections::HashMap;
 use std::time::Instant;
+use timsquery::models::aggregators::{
+    MultiCMGStatsFactory,
+    RawPeakIntensityAggregator,
+    RawPeakVectorAggregator,
+};
 use timsquery::models::elution_group::ElutionGroup;
+use timsquery::models::indices::{
+    ExpandedRawFrameIndex,
+    QuadSplittedTransposedIndex,
+};
 use timsquery::queriable_tims_data::queriable_tims_data::query_multi_group;
-use timsquery::traits::tolerance::DefaultTolerance;
-use timsquery::traits::tolerance::{MobilityTolerance, MzToleramce, QuadTolerance, RtTolerance};
-use timsquery::{
-    models::aggregators::{
-        ChromatomobilogramStats, ExtractedIonChromatomobilogram, MultiCMGStatsFactory,
-        RawPeakIntensityAggregator, RawPeakVectorAggregator,
-    },
-    models::indices::{ExpandedRawFrameIndex, QuadSplittedTransposedIndex},
+use timsquery::traits::tolerance::{
+    DefaultTolerance,
+    MobilityTolerance,
+    MzToleramce,
+    QuadTolerance,
+    RtTolerance,
 };
 use tracing::instrument;
 use tracing::subscriber::set_global_default;
-use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
-use tracing_subscriber::{prelude::*, registry::Registry, EnvFilter};
+use tracing_bunyan_formatter::{
+    BunyanFormattingLayer,
+    JsonStorageLayer,
+};
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::registry::Registry;
+use tracing_subscriber::EnvFilter;
 
 fn main() {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
@@ -58,8 +76,7 @@ fn main_write_template(args: WriteTemplateArgs) {
     std::fs::write(tolerance_json_path.clone(), tolerance_json).unwrap();
     println!(
         "use as `timsquery query-index --output-path '.' --raw-file-path 'your_file.d' --tolerance-settings-path {:#?} --elution-groups-path {:#?}`",
-        tolerance_json_path,
-        egs_json_path,
+        tolerance_json_path, egs_json_path,
     );
 }
 
@@ -81,16 +98,16 @@ fn template_elution_groups(num: usize) -> Vec<ElutionGroup<usize>> {
         let rt = min_rt + (i as f32 * rt_step);
         let mobility = min_mobility + (i as f32 * mobility_step);
         let mz = min_mz + (i as f64 * mz_step);
-        let precursor_charge = 2;
         let fragment_mzs = (0..10).map(|x| (x as usize, mz + x as f64));
         let fragment_mzs = HashMap::from_iter(fragment_mzs);
         egs.push(ElutionGroup {
             id: i as u64,
             rt_seconds: rt,
             mobility,
-            precursor_mz: mz,
-            precursor_charge,
+            precursor_mzs: vec![mz],
             fragment_mzs,
+            expected_fragment_intensity: None,
+            expected_precursor_intensity: None,
         });
     }
     egs
@@ -108,7 +125,7 @@ fn main_query_index(args: QueryIndexArgs) {
 
     let tolerance_settings: DefaultTolerance =
         serde_json::from_str(&std::fs::read_to_string(&tolerance_settings_path).unwrap()).unwrap();
-    let elution_groups: Vec<ElutionGroup<usize>> =
+    let elution_groups: Vec<ElutionGroup<String>> =
         serde_json::from_str(&std::fs::read_to_string(&elution_groups_path).unwrap()).unwrap();
 
     let index_use = match (index_use, elution_groups.len() > 10) {
@@ -133,11 +150,11 @@ fn main_query_index(args: QueryIndexArgs) {
 
 fn template_tolerance_settings() -> DefaultTolerance {
     DefaultTolerance {
-        ms: MzToleramce::Ppm((50.0, 50.0)),
+        ms: MzToleramce::Ppm((15.0, 15.0)),
         // rt: RtTolerance::Absolute((120.0, 120.0)),
         rt: RtTolerance::None,
-        mobility: MobilityTolerance::Pct((20.0, 20.0)),
-        quad: QuadTolerance::Absolute((0.1, 0.1, 1)),
+        mobility: MobilityTolerance::Pct((10.0, 10.0)),
+        quad: QuadTolerance::Absolute((0.1, 0.1)),
     }
 }
 
@@ -153,8 +170,6 @@ pub enum PossibleAggregator {
     #[default]
     RawPeakIntensityAggregator,
     RawPeakVectorAggregator,
-    ExtractedIonChromatomobilogram,
-    ChromatoMobilogramStat,
     MultiCMGStats,
 }
 
@@ -225,7 +240,7 @@ enum Commands {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ElutionGroupResults<T: Serialize> {
-    elution_group: ElutionGroup<usize>,
+    elution_group: ElutionGroup<String>,
     result: T,
 }
 
@@ -234,7 +249,7 @@ pub fn execute_query(
     aggregator: PossibleAggregator,
     raw_file_path: String,
     tolerance: DefaultTolerance,
-    elution_groups: Vec<ElutionGroup<usize>>,
+    elution_groups: Vec<ElutionGroup<String>>,
     args: QueryIndexArgs,
 ) {
     let output_path = args.output_path;
@@ -292,27 +307,19 @@ pub fn execute_query(
             let index = QuadSplittedTransposedIndex::from_path(&(raw_file_path.clone())).unwrap();
             match aggregator {
                 PossibleAggregator::RawPeakIntensityAggregator => {
-                    let aggregator = RawPeakIntensityAggregator::new;
+                    let aggregator = RawPeakIntensityAggregator::new_with_elution_group;
                     execute_query_inner!(index, aggregator);
                 }
                 PossibleAggregator::RawPeakVectorAggregator => {
-                    let aggregator = RawPeakVectorAggregator::new;
-                    execute_query_inner!(index, aggregator);
-                }
-                PossibleAggregator::ChromatoMobilogramStat => {
-                    let aggregator = ChromatomobilogramStats::new;
-                    execute_query_inner!(index, aggregator);
-                }
-                PossibleAggregator::ExtractedIonChromatomobilogram => {
-                    let aggregator = ExtractedIonChromatomobilogram::new;
+                    let aggregator = RawPeakVectorAggregator::new_with_elution_group;
                     execute_query_inner!(index, aggregator);
                 }
                 PossibleAggregator::MultiCMGStats => {
                     let factory = MultiCMGStatsFactory {
                         converters: (index.mz_converter, index.im_converter),
-                        _phantom: std::marker::PhantomData::<usize>,
+                        _phantom: std::marker::PhantomData::<String>,
                     };
-                    execute_query_inner!(index, |x| factory.build(x));
+                    execute_query_inner!(index, |x| factory.build_with_elution_group(x));
                 }
             }
         }
@@ -320,27 +327,19 @@ pub fn execute_query(
             let index = ExpandedRawFrameIndex::from_path(&(raw_file_path.clone())).unwrap();
             match aggregator {
                 PossibleAggregator::RawPeakIntensityAggregator => {
-                    let aggregator = RawPeakIntensityAggregator::new;
+                    let aggregator = RawPeakIntensityAggregator::new_with_elution_group;
                     execute_query_inner!(index, aggregator);
                 }
                 PossibleAggregator::RawPeakVectorAggregator => {
-                    let aggregator = RawPeakVectorAggregator::new;
-                    execute_query_inner!(index, aggregator);
-                }
-                PossibleAggregator::ChromatoMobilogramStat => {
-                    let aggregator = ChromatomobilogramStats::new;
-                    execute_query_inner!(index, aggregator);
-                }
-                PossibleAggregator::ExtractedIonChromatomobilogram => {
-                    let aggregator = ExtractedIonChromatomobilogram::new;
+                    let aggregator = RawPeakVectorAggregator::new_with_elution_group;
                     execute_query_inner!(index, aggregator);
                 }
                 PossibleAggregator::MultiCMGStats => {
                     let factory = MultiCMGStatsFactory {
                         converters: (index.mz_converter, index.im_converter),
-                        _phantom: std::marker::PhantomData::<usize>,
+                        _phantom: std::marker::PhantomData::<String>,
                     };
-                    execute_query_inner!(index, |x| factory.build(x));
+                    execute_query_inner!(index, |x| factory.build_with_elution_group(x));
                 }
             }
         }

@@ -1,16 +1,35 @@
-use super::peak_bucket::PeakBucketBuilder;
-use super::peak_bucket::{PeakBucket, PeakInBucket};
-use crate::models::frames::expanded_frame::{ExpandedFrameSlice, SortingStateTrait};
+use super::peak_bucket::{
+    PeakBucket,
+    PeakBucketBuilder,
+    PeakInBucket,
+};
+use crate::models::frames::expanded_frame::{
+    ExpandedFrameSlice,
+    SortingStateTrait,
+};
 use crate::models::frames::peak_in_quad::PeakInQuad;
 use crate::models::frames::single_quad_settings::SingleQuadrupoleSetting;
 use crate::sort_vecs_by_first;
-use crate::utils::display::{glimpse_vec, GlimpseConfig};
-use std::collections::{BTreeMap, HashMap};
+use crate::utils::display::{
+    glimpse_vec,
+    GlimpseConfig,
+};
+use crate::utils::tolerance_ranges::IncludedRange;
+use std::collections::{
+    BTreeMap,
+    HashMap,
+};
 use std::fmt::Display;
 use std::time::Instant;
-use timsrust::converters::{ConvertableDomain, Frame2RtConverter};
-use tracing::instrument;
-use tracing::{debug, info};
+use timsrust::converters::{
+    ConvertableDomain,
+    Frame2RtConverter,
+};
+use tracing::{
+    debug,
+    info,
+    instrument,
+};
 
 #[derive(Debug)]
 pub struct TransposedQuadIndex {
@@ -62,8 +81,22 @@ impl Display for TransposedQuadIndex {
             f,
             "TransposedQuadIndex\n quad_settings: {:?}\n frame_indices: {}\n frame_rts: {}\n peak_buckets: {}\n",
             self.quad_settings,
-            glimpse_vec(&self.frame_indices, Some(GlimpseConfig { max_items: 10, padding: 2, new_line: true })),
-            glimpse_vec(&self.frame_rts, Some(GlimpseConfig { max_items: 10, padding: 2, new_line: true })),
+            glimpse_vec(
+                &self.frame_indices,
+                Some(GlimpseConfig {
+                    max_items: 10,
+                    padding: 2,
+                    new_line: true
+                })
+            ),
+            glimpse_vec(
+                &self.frame_rts,
+                Some(GlimpseConfig {
+                    max_items: 10,
+                    padding: 2,
+                    new_line: true
+                })
+            ),
             display_peak_bucket_map(&self.peak_buckets),
         )
     }
@@ -72,12 +105,12 @@ impl Display for TransposedQuadIndex {
 impl TransposedQuadIndex {
     pub fn query_peaks(
         &self,
-        tof_range: (u32, u32),
-        scan_range: Option<(usize, usize)>,
-        rt_range: Option<(f32, f32)>,
+        tof_range: IncludedRange<u32>,
+        scan_range: Option<IncludedRange<usize>>,
+        rt_range: Option<IncludedRange<f32>>,
     ) -> impl Iterator<Item = PeakInQuad> + '_ {
         self.peak_buckets
-            .range(tof_range.0..tof_range.1)
+            .range(tof_range.start()..=tof_range.end())
             .flat_map(move |(tof_index, pb)| {
                 pb.query_peaks(scan_range, rt_range)
                     .map(move |p| PeakInQuad::from_peak_in_bucket(p, *tof_index))
@@ -161,6 +194,7 @@ impl TransposedQuadIndexBuilder {
             num_frames = %self.frame_indices.len(),
             quad_settings = format!("{:?}", self.quad_settings),
         )
+        level = "debug",
     )]
     pub fn build(self) -> TransposedQuadIndex {
         // TODO: Refactor this function, its getting pretty large.
@@ -205,7 +239,10 @@ impl TransposedQuadIndexBuilder {
                 let curr_bucket = peak_buckets.get(&(tof as u32)).unwrap();
                 let real_count = curr_bucket.len();
                 if real_count != count {
-                    println!("TransposedQuadIndex::build failed at tof bucket count check, expected: {}, real: {}", count, real_count);
+                    println!(
+                        "TransposedQuadIndex::build failed at tof bucket count check, expected: {}, real: {}",
+                        count, real_count
+                    );
                     println!("Bucket -> {:?}", curr_bucket);
 
                     panic!("TransposedQuadIndex::build failed at tof bucket count check");
@@ -248,7 +285,8 @@ impl TransposedQuadIndexBuilder {
             num_frames = %self.frame_indices.len(),
             quad_settings = format!("{:?}", self.quad_settings),
             peak_buckets = %peak_buckets.len(),
-        )
+        ),
+        level = "debug",
     )]
     fn build_inner_ref(
         self,
@@ -302,7 +340,10 @@ impl TransposedQuadIndexBuilder {
         }
 
         if added_peaks != tot_peaks {
-            println!("TransposedQuadIndex::add_frame_slice failed at peak count check, expected: {}, real: {}", tot_peaks, added_peaks);
+            println!(
+                "TransposedQuadIndex::add_frame_slice failed at peak count check, expected: {}, real: {}",
+                tot_peaks, added_peaks
+            );
             panic!("TransposedQuadIndex::add_frame_slice failed at peak count check");
         }
 
@@ -316,7 +357,8 @@ impl TransposedQuadIndexBuilder {
             num_frames = %self.frame_indices.len(),
             quad_settings = format!("{:?}", self.quad_settings),
             peak_buckets = %peak_buckets.len(),
-        )
+        ),
+        level = "debug",
     )]
     fn batched_build_inner(
         self,
@@ -407,14 +449,25 @@ impl TransposedQuadIndexBuilder {
             let insertion_elapsed = insertion_st.elapsed();
             info!(
                 "BatchedBuild: quad_settings={:?} start={:?} end={:?}/{} peaks {}/{} concat took {:#?} sorting took: {:#?} insertion took {:#?}",
-                self.quad_settings, start, end, num_slices, added_peaks, tot_peaks, concat_elapsed, sorting_elapsed, insertion_elapsed,
+                self.quad_settings,
+                start,
+                end,
+                num_slices,
+                added_peaks,
+                tot_peaks,
+                concat_elapsed,
+                sorting_elapsed,
+                insertion_elapsed,
             );
             start = end;
             peaks_in_chunk = 0;
         }
 
         if added_peaks != tot_peaks {
-            println!("TransposedQuadIndex::add_frame_slice failed at peak count check, expected: {}, real: {}", tot_peaks, added_peaks);
+            println!(
+                "TransposedQuadIndex::add_frame_slice failed at peak count check, expected: {}, real: {}",
+                tot_peaks, added_peaks
+            );
             panic!("TransposedQuadIndex::add_frame_slice failed at peak count check");
         }
 

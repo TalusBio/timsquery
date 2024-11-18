@@ -1,6 +1,11 @@
 use crate::sort_vecs_by_first;
-use std::ops::RangeInclusive;
-use tracing::{error, info, warn};
+use tracing::{
+    error,
+    info,
+    warn,
+};
+
+use super::tolerance_ranges::IncludedRange;
 
 pub type TofIntensityVecs = (Vec<u32>, Vec<u32>);
 pub type CentroidedVecs = (TofIntensityVecs, Vec<usize>);
@@ -61,8 +66,8 @@ pub fn lazy_centroid_weighted_frame<'a>(
     peak_refs: &'a [PeakArrayRefs<'a>],
     reference_index: usize,
     max_peaks: usize,
-    tof_tol_range_fn: impl Fn(u32) -> RangeInclusive<u32>,
-    ims_tol_range_fn: impl Fn(usize) -> RangeInclusive<usize>,
+    tof_tol_range_fn: impl Fn(u32) -> IncludedRange<u32>,
+    ims_tol_range_fn: impl Fn(usize) -> IncludedRange<usize>,
 ) -> CentroidedVecs {
     let slice_sizes: Vec<usize> = peak_refs.iter().map(|x| x.len()).collect();
     let tot_size: usize = slice_sizes.iter().sum();
@@ -141,13 +146,13 @@ pub fn lazy_centroid_weighted_frame<'a>(
         for (ii, local_peak_refs) in peak_refs.iter().enumerate() {
             let ss_start = local_peak_refs
                 .tof_array
-                .partition_point(|x| x < tof_range.start());
+                .partition_point(|x| *x < tof_range.start());
             let ss_end = local_peak_refs
                 .tof_array
-                .partition_point(|x| x <= tof_range.end());
+                .partition_point(|x| *x <= tof_range.end());
             for i in ss_start..ss_end {
                 let ti = local_offset_touched + i;
-                if !touched[ti] && ims_range.contains(&local_peak_refs.ims_array[i]) {
+                if !touched[ti] && ims_range.contains(local_peak_refs.ims_array[i]) {
                     // Peaks are always weighted but not always intense!
                     let local_intensity = local_peak_refs.intensity_array[i] as u64;
                     if ii == reference_index {
@@ -170,8 +175,8 @@ pub fn lazy_centroid_weighted_frame<'a>(
             // let calc_ims = (curr_agg_ims / curr_weight) as usize;
             let calc_tof = tof;
             let calc_ims = ims;
-            debug_assert!(tof_range.contains(&calc_tof));
-            debug_assert!(ims_range.contains(&calc_ims));
+            debug_assert!(tof_range.contains(calc_tof));
+            debug_assert!(ims_range.contains(calc_ims));
             agg_tof.push(calc_tof);
             agg_ims.push(calc_ims);
             num_added += 1;
@@ -188,11 +193,11 @@ pub fn lazy_centroid_weighted_frame<'a>(
     let out = sort_n_check(agg_intensity, agg_tof, agg_ims);
 
     // TODO:Make everything below this a separate function and accumulate it.
-    let tot_final_intensity = out.0 .1.iter().map(|x| *x as u64).sum::<u64>();
+    let tot_final_intensity = out.0.1.iter().map(|x| *x as u64).sum::<u64>();
     let inten_ratio = tot_final_intensity as f64 / initial_tot_intensity as f64;
     assert!(initial_tot_intensity >= tot_final_intensity);
 
-    let output_len = out.0 .0.len();
+    let output_len = out.0.0.len();
     let compression_ratio = output_len as f64 / arr_len as f64;
     assert!(num_added == output_len);
 
@@ -211,8 +216,8 @@ pub fn lazy_centroid_weighted_frame<'a>(
         warn!("tot_final_intensity: {:?}", tot_final_intensity);
         warn!(
             "First tof {} -> Range {:?}",
-            out.0 .0[0],
-            tof_tol_range_fn(out.0 .0[0])
+            out.0.0[0],
+            tof_tol_range_fn(out.0.0[0])
         );
         panic!();
         // warn!("agg_intensity: {:?}", out.0 .0);
@@ -226,14 +231,14 @@ mod tests {
     use super::*;
 
     // Helper function to create a simple tolerance range for testing
-    fn test_tof_tolerance(tof: u32) -> RangeInclusive<u32> {
+    fn test_tof_tolerance(tof: u32) -> IncludedRange<u32> {
         let tolerance = 2;
-        (tof.saturating_sub(tolerance))..=tof.saturating_add(tolerance)
+        (tof.saturating_sub(tolerance), tof.saturating_add(tolerance)).into()
     }
 
-    fn test_ims_tolerance(ims: usize) -> RangeInclusive<usize> {
+    fn test_ims_tolerance(ims: usize) -> IncludedRange<usize> {
         let tolerance = 1;
-        (ims.saturating_sub(tolerance))..=ims.saturating_add(tolerance)
+        (ims.saturating_sub(tolerance), ims.saturating_add(tolerance)).into()
     }
 
     // Helper function to create PeakArrayRefs

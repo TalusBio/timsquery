@@ -1,8 +1,14 @@
 use std::iter::repeat;
 
-use super::expanded_frame::{ExpandedFrameSlice, SortingStateTrait};
+use super::expanded_frame::{
+    ExpandedFrameSlice,
+    SortingStateTrait,
+};
 use super::single_quad_settings::SingleQuadrupoleSetting;
-use timsrust::{AcquisitionType, MSLevel};
+use timsrust::{
+    AcquisitionType,
+    MSLevel,
+};
 
 pub struct ExpandedWindowGroup {
     pub tof_indices: Vec<u32>,
