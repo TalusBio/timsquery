@@ -1,5 +1,9 @@
+use crate::models::elution_group;
 use crate::models::frames::raw_peak::RawPeak;
-use crate::traits::aggregator::Aggregator;
+use crate::traits::aggregator::{
+    Aggregator,
+    NoContext,
+};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy)]
@@ -12,17 +16,35 @@ impl RawPeakIntensityAggregator {
     pub fn new(id: u64) -> Self {
         Self { id, intensity: 0 }
     }
+
+    pub fn new_with_elution_group<
+        T: Send + Sync + std::hash::Hash + Clone + Eq + PartialEq + Serialize + std::fmt::Debug,
+    >(
+        elution_group: &elution_group::ElutionGroup<T>,
+    ) -> Self {
+        Self {
+            id: elution_group.id,
+            intensity: 0,
+        }
+    }
 }
 
-impl Aggregator<RawPeak> for RawPeakIntensityAggregator {
+impl Aggregator for RawPeakIntensityAggregator {
+    type Context = NoContext;
+    type Item = RawPeak;
     type Output = u64;
 
-    fn add(&mut self, peak: &RawPeak) {
+    fn add(&mut self, peak: impl Into<RawPeak>) {
+        let peak = peak.into();
         self.intensity += peak.intensity as u64;
     }
 
     fn finalize(self) -> u64 {
         self.intensity
+    }
+
+    fn supports_context(&self) -> bool {
+        false
     }
 }
 
@@ -38,6 +60,14 @@ impl RawPeakVectorAggregator {
             id,
             peaks: RawPeakVectorArrays::new(),
         }
+    }
+
+    pub fn new_with_elution_group<
+        T: Send + Sync + std::hash::Hash + Clone + Eq + PartialEq + Serialize + std::fmt::Debug,
+    >(
+        elution_group: &elution_group::ElutionGroup<T>,
+    ) -> Self {
+        Self::new(elution_group.id)
     }
 }
 
@@ -60,10 +90,13 @@ pub struct RawPeakVectorArrays {
     pub retention_times: Vec<f32>,
 }
 
-impl Aggregator<RawPeak> for RawPeakVectorAggregator {
+impl Aggregator for RawPeakVectorAggregator {
+    type Context = NoContext;
+    type Item = RawPeak;
     type Output = RawPeakVectorArrays;
 
-    fn add(&mut self, peak: &RawPeak) {
+    fn add(&mut self, peak: impl Into<RawPeak>) {
+        let peak = peak.into();
         self.peaks.scans.push(peak.scan_index);
         self.peaks.tofs.push(peak.tof_index);
         self.peaks.intensities.push(peak.intensity);
@@ -72,5 +105,9 @@ impl Aggregator<RawPeak> for RawPeakVectorAggregator {
 
     fn finalize(self) -> RawPeakVectorArrays {
         self.peaks
+    }
+
+    fn supports_context(&self) -> bool {
+        false
     }
 }

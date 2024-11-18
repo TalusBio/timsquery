@@ -1,9 +1,10 @@
-use log::debug;
+use tracing::debug;
 
 // Generic streaming aggregator that takes a pair of unsigned ints one with a value
 // and another with a weight and in a streaming fashion adds the value to the accumulator
 // to calculate the total, mean and variance.
 
+// TODO: move this to the general errors.
 #[derive(Debug, Clone, Copy)]
 pub enum StreamingAggregatorError {
     DivisionByZero,
@@ -12,16 +13,44 @@ pub enum StreamingAggregatorError {
 
 type Result<T> = std::result::Result<T, StreamingAggregatorError>;
 
+/// A struct that can be used to calculate the mean and variance of a stream of numbers.
+///
+/// # Example
+///
+/// ```
+/// use timsquery::models::aggregators::streaming_aggregator::RunningStatsCalculator;
+///
+/// // Create a new calculator with a weight of 10 and a mean of 0.0
+/// let mut calc = RunningStatsCalculator::new(1, 0.0);
+/// calc.add(10.0, 1);
+/// calc.add(0.0, 1);
+/// calc.add(10.0, 1);
+/// calc.add(0.0, 1);
+/// calc.add(10.0, 1);
+/// calc.add(0.0, 1);
+/// // So overall this should be the equivalent of the mean for
+/// // [0.0, 10.0, 0.0, 10.0, 0.0, 10.0]
+/// assert_eq!(calc.mean().unwrap(), 5.0, "{calc:#?}");
+/// assert!((4.5..5.5).contains(&calc.standard_deviation().unwrap()), "{calc:#?}");
+/// ```
+///
+/// # Notes
+///
+/// It is important to know that the calculation of the mean is not
+/// perfect. Thus if the initial value passes if very far off the real
+/// mean, the final estimate will be off.
+///
 /// Ref impl in javascript ...
 /// https://nestedsoftware.com/2018/03/27/calculating-standard-deviation-on-streaming-data-253l.23919.html
 /// https://nestedsoftware.com/2019/09/26/incremental-average-and-standard-deviation-with-sliding-window-470k.176143.html
 /// Read the blog ... its amazing.
-///
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RunningStatsCalculator {
     weight: u64,
     mean_n: f64,
     d_: f64,
+    min: f64,
+    max: f64,
     // count: u64,
 }
 
@@ -30,7 +59,9 @@ impl RunningStatsCalculator {
         Self {
             weight,
             mean_n: mean,
-            d_: 0.0,
+            d_: 1.0,
+            min: mean,
+            max: mean,
             // count: 0,
         }
     }
@@ -52,6 +83,35 @@ impl RunningStatsCalculator {
 
         // Update the weight
         self.weight += weight;
+
+        // That should be the end of it but I seem to be getting consistently some
+        // values outside of the min and max observed values. Which might be a
+        // float issue ... TODO investigate.
+
+        // In the meantime I will just squeeze the mean to the min/max observed values.
+        self.min = self.min.min(value);
+        self.max = self.max.max(value);
+
+        self.mean_n = self.mean_n.min(self.max).max(self.min);
+
+        assert!(
+            self.mean_n <= self.max,
+            "high mean_n: {} max: {} curr_sd: {} weight_ratio: {} {:?}",
+            self.mean_n,
+            self.max,
+            self.standard_deviation().unwrap(),
+            weight_ratio,
+            self
+        );
+        assert!(
+            self.mean_n >= self.min,
+            "low mean_n: {} min: {} curr_sd: {} weight_ratio: {} {:?}",
+            self.mean_n,
+            self.min,
+            self.standard_deviation().unwrap(),
+            weight_ratio,
+            self
+        );
     }
 
     pub fn mean(&self) -> Result<f64> {

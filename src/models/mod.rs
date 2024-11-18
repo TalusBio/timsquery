@@ -1,3 +1,4 @@
+pub mod adapters;
 pub mod aggregators;
 pub mod elution_group;
 pub mod frames;

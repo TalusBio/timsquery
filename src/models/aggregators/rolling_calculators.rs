@@ -1,3 +1,4 @@
+use crate::utils::math::lnfact;
 // Rolling median calculator
 
 pub struct RollingMedianCalculator<T: PartialOrd + Copy + Clone> {
@@ -56,6 +57,24 @@ pub fn rolling_median<T: PartialOrd + Copy + Clone>(
     out
 }
 
+pub fn calculate_lazy_hyperscore(npeaks: &[u8], summed_intensity: &[u64]) -> Vec<f64> {
+    let mut scores = vec![0.0; npeaks.len()];
+    for i in 0..npeaks.len() {
+        let npeaks_i = npeaks[i];
+        let summed_intensity_i = summed_intensity[i];
+        let log1p_intensities_i = (summed_intensity_i as f64 + 1.0).ln();
+        scores[i] = lnfact(npeaks_i as u16) + (2.0 * log1p_intensities_i);
+    }
+    scores
+}
+
+pub fn calculate_value_vs_baseline(vals: &[f64], baseline_window_size: usize) -> Vec<f64> {
+    let baseline = rolling_median(vals, baseline_window_size, f64::NAN);
+    vals.iter()
+        .zip(baseline.iter())
+        .map(|(x, y)| x - y)
+        .collect()
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,5 +118,28 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_value_vs_baseline() {
+        let vals = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
+        let baseline_window_size = 3;
+        let _baseline = rolling_median(&vals, baseline_window_size, f64::NAN);
+        let out = calculate_value_vs_baseline(&vals, baseline_window_size);
+        let expect_val = vec![f64::NAN, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, f64::NAN];
+        let all_close = out
+            .iter()
+            .zip(expect_val.iter())
+            .filter(|(a, b)| ((!a.is_nan()) && (!b.is_nan())))
+            .all(|(a, b)| (a - b).abs() < 1e-6);
+
+        let all_match_nan = out
+            .iter()
+            .zip(expect_val.iter())
+            .filter(|(a, b)| ((a.is_nan()) || (b.is_nan())))
+            .all(|(a, b)| a.is_nan() && b.is_nan());
+
+        assert!(all_close, "Expected {:?}, got {:?}", expect_val, out);
+        assert!(all_match_nan, "Expected {:?}, got {:?}", expect_val, out);
     }
 }

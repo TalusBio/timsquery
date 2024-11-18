@@ -1,20 +1,39 @@
-use super::peak_bucket::PeakBucketBuilder;
-use super::peak_bucket::{PeakBucket, PeakInBucket};
-use crate::models::frames::raw_peak::RawPeak;
+use super::peak_bucket::{
+    PeakBucket,
+    PeakBucketBuilder,
+    PeakInBucket,
+};
+use crate::models::frames::expanded_frame::{
+    ExpandedFrameSlice,
+    SortingStateTrait,
+};
+use crate::models::frames::peak_in_quad::PeakInQuad;
 use crate::models::frames::single_quad_settings::SingleQuadrupoleSetting;
-use crate::utils::display::{glimpse_vec, GlimpseConfig};
-
-use log::info;
-use log::trace;
-use rayon::prelude::*;
-use std::collections::{BTreeMap, HashMap};
+use crate::sort_vecs_by_first;
+use crate::utils::display::{
+    glimpse_vec,
+    GlimpseConfig,
+};
+use crate::utils::tolerance_ranges::IncludedRange;
+use std::collections::{
+    BTreeMap,
+    HashMap,
+};
 use std::fmt::Display;
 use std::time::Instant;
-use timsrust::converters::{ConvertableDomain, Frame2RtConverter};
+use timsrust::converters::{
+    ConvertableDomain,
+    Frame2RtConverter,
+};
+use tracing::{
+    debug,
+    info,
+    instrument,
+};
 
 #[derive(Debug)]
 pub struct TransposedQuadIndex {
-    pub quad_settings: SingleQuadrupoleSetting,
+    pub quad_settings: Option<SingleQuadrupoleSetting>,
     pub frame_rts: Vec<f64>,
     pub frame_indices: Vec<usize>,
     pub peak_buckets: BTreeMap<u32, PeakBucket>,
@@ -60,10 +79,24 @@ impl Display for TransposedQuadIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "TransposedQuadIndex\n quad_settings: {}\n frame_indices: {}\n frame_rts: {}\n peak_buckets: {}\n",
+            "TransposedQuadIndex\n quad_settings: {:?}\n frame_indices: {}\n frame_rts: {}\n peak_buckets: {}\n",
             self.quad_settings,
-            glimpse_vec(&self.frame_indices, Some(GlimpseConfig { max_items: 10, padding: 2, new_line: true })),
-            glimpse_vec(&self.frame_rts, Some(GlimpseConfig { max_items: 10, padding: 2, new_line: true })),
+            glimpse_vec(
+                &self.frame_indices,
+                Some(GlimpseConfig {
+                    max_items: 10,
+                    padding: 2,
+                    new_line: true
+                })
+            ),
+            glimpse_vec(
+                &self.frame_rts,
+                Some(GlimpseConfig {
+                    max_items: 10,
+                    padding: 2,
+                    new_line: true
+                })
+            ),
             display_peak_bucket_map(&self.peak_buckets),
         )
     }
@@ -72,89 +105,16 @@ impl Display for TransposedQuadIndex {
 impl TransposedQuadIndex {
     pub fn query_peaks(
         &self,
-        tof_range: (u32, u32),
-        scan_range: Option<(usize, usize)>,
-        rt_range: Option<FrameRTTolerance>,
-        // ) -> Vec<PeakInQuad> {
+        tof_range: IncludedRange<u32>,
+        scan_range: Option<IncludedRange<usize>>,
+        rt_range: Option<IncludedRange<f32>>,
     ) -> impl Iterator<Item = PeakInQuad> + '_ {
-        trace!(
-            "TransposedQuadIndex::query_peaks tof_range: {:?}, scan_range: {:?}, rt_range: {:?}",
-            tof_range,
-            scan_range,
-            rt_range
-        );
-        // TODO reimplement as an iterator ...
-        // This version is not compatible with the borrow checker unless I collect the vec...
-        // which will do for now for prototyping.
-        let frame_index_range = self.convert_to_local_frame_range(rt_range);
-
         self.peak_buckets
-            .range(tof_range.0..tof_range.1)
+            .range(tof_range.start()..=tof_range.end())
             .flat_map(move |(tof_index, pb)| {
-                pb.query_peaks(scan_range, frame_index_range)
+                pb.query_peaks(scan_range, rt_range)
                     .map(move |p| PeakInQuad::from_peak_in_bucket(p, *tof_index))
             })
-        // Coult I just return an Arc<[intensities]> + ...
-        // If I made the peak buckets sparse, I could make it ... not be an option.
-    }
-
-    fn convert_to_local_frame_range(
-        &self,
-        rt_range: Option<FrameRTTolerance>,
-    ) -> Option<(f32, f32)> {
-        // TODO consider if I should allow only RT here, since it would in theory
-        // force me to to the repreatable work beforehand.
-        let frame_index_range = match rt_range {
-            Some(FrameRTTolerance::Seconds((rt_low, rt_high))) => {
-                Some((rt_low as f32, rt_high as f32))
-            }
-            Some(FrameRTTolerance::FrameIndex((frame_low, frame_high))) => {
-                let frame_id_start = self
-                    .frame_indices
-                    .binary_search_by(|x| x.cmp(&frame_low))
-                    .unwrap_or_else(|x| x);
-
-                let frame_id_end = self
-                    .frame_indices
-                    .binary_search_by(|x| x.cmp(&frame_high))
-                    .unwrap_or_else(|x| x);
-
-                // TODO consider throwing a warning if we are
-                // out of bounds here.
-                Some((
-                    self.frame_rts[frame_id_start.min(self.frame_rts.len() - 1)] as f32,
-                    self.frame_rts[frame_id_end.min(self.frame_rts.len() - 1)] as f32,
-                ))
-            }
-            None => None,
-        };
-
-        if cfg!(debug_assertions) {
-            if let Some((low, high)) = frame_index_range {
-                debug_assert!(low <= high);
-            }
-        }
-
-        frame_index_range
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct PeakInQuad {
-    pub scan_index: usize,
-    pub intensity: u32,
-    pub retention_time: f32,
-    pub tof_index: u32,
-}
-
-impl From<PeakInQuad> for RawPeak {
-    fn from(peak_in_quad: PeakInQuad) -> Self {
-        RawPeak {
-            scan_index: peak_in_quad.scan_index,
-            tof_index: peak_in_quad.tof_index,
-            intensity: peak_in_quad.intensity,
-            retention_time: peak_in_quad.retention_time,
-        }
     }
 }
 
@@ -168,7 +128,6 @@ impl PeakInQuad {
         }
     }
 }
-
 // Q: Do I use this? Should I just have it as the frame index as
 // an option?
 #[derive(Debug, Clone, Copy)]
@@ -192,7 +151,7 @@ impl FrameRTTolerance {
 
 #[derive(Debug, Clone)]
 pub struct TransposedQuadIndexBuilder {
-    quad_settings: SingleQuadrupoleSetting,
+    quad_settings: Option<SingleQuadrupoleSetting>,
     int_slices: Vec<Vec<u32>>,
     tof_slices: Vec<Vec<u32>>,
     scan_slices: Vec<Vec<usize>>,
@@ -201,7 +160,7 @@ pub struct TransposedQuadIndexBuilder {
 }
 
 impl TransposedQuadIndexBuilder {
-    pub fn new(quad_settings: SingleQuadrupoleSetting) -> Self {
+    pub fn new(quad_settings: Option<SingleQuadrupoleSetting>) -> Self {
         Self {
             quad_settings,
             int_slices: Vec::new(),
@@ -220,34 +179,33 @@ impl TransposedQuadIndexBuilder {
         self.frame_rts.extend(other.frame_rts);
     }
 
-    pub fn add_frame_slice(
-        &mut self,
-        int_slice: Vec<u32>,
-        tof_slice: Vec<u32>,
-        expanded_scan_slice: Vec<usize>,
-        frame_index: usize,
-        frame_rt: f64,
-    ) {
-        assert!(int_slice.len() == tof_slice.len());
-        assert!(int_slice.len() == expanded_scan_slice.len());
-
-        self.int_slices.push(int_slice);
-        self.tof_slices.push(tof_slice);
-        self.scan_slices.push(expanded_scan_slice);
-        self.frame_indices.push(frame_index);
-        self.frame_rts.push(frame_rt);
+    pub fn add_frame_slice<T: SortingStateTrait>(&mut self, slice: ExpandedFrameSlice<T>) {
+        self.int_slices.push(slice.intensities);
+        self.tof_slices.push(slice.tof_indices);
+        self.scan_slices.push(slice.scan_numbers);
+        self.frame_indices.push(slice.frame_index);
+        self.frame_rts.push(slice.rt);
     }
 
+    #[instrument(
+        name = "TransposedQuadIndex::build",
+        skip(self),
+        fields(
+            num_frames = %self.frame_indices.len(),
+            quad_settings = format!("{:?}", self.quad_settings),
+        )
+        level = "debug",
+    )]
     pub fn build(self) -> TransposedQuadIndex {
-        let st = Instant::now();
+        // TODO: Refactor this function, its getting pretty large.
         let max_tof = *self
             .tof_slices
             .iter()
-            .map(|x| x.iter().max().unwrap())
+            .filter_map(|x| x.iter().max())
             .max()
             .unwrap();
-        let mut tof_counts = vec![0; max_tof as usize + 1];
-        let mut tot_peaks = 0;
+        let mut tof_counts = vec![0usize; max_tof as usize + 1];
+        let mut tot_peaks = 0u64;
         for tof_slice in self.tof_slices.iter() {
             for tof in tof_slice.iter() {
                 tof_counts[*tof as usize] += 1;
@@ -264,22 +222,103 @@ impl TransposedQuadIndexBuilder {
                 continue;
             }
         }
-
         let out_rts = self.frame_rts.clone();
         let out_indices = self.frame_indices.clone();
-        let mut added_peaks = 0;
+        let quad_settings = self.quad_settings;
 
         let aps = Instant::now();
+
+        peak_buckets = if tot_peaks > 10_000_000 {
+            self.batched_build_inner(peak_buckets, tot_peaks)
+        } else {
+            self.build_inner_ref(peak_buckets, tot_peaks)
+        };
+
+        for (tof, count) in tof_counts.into_iter().enumerate() {
+            if count > 0 {
+                let curr_bucket = peak_buckets.get(&(tof as u32)).unwrap();
+                let real_count = curr_bucket.len();
+                if real_count != count {
+                    println!(
+                        "TransposedQuadIndex::build failed at tof bucket count check, expected: {}, real: {}",
+                        count, real_count
+                    );
+                    println!("Bucket -> {:?}", curr_bucket);
+
+                    panic!("TransposedQuadIndex::build failed at tof bucket count check");
+                };
+            } else {
+                continue;
+            }
+        }
+
+        let bb_st = Instant::now();
+
+        // FYI par iter here makes no difference.
+        let peak_bucket: BTreeMap<u32, PeakBucket> = peak_buckets
+            .into_iter()
+            .map(|(tof, pb)| (tof, pb.build()))
+            .collect();
+
+        let bbe = bb_st.elapsed();
+        info!(
+            "TransposedQuadIndex::add_frame_slice adding peaks took {:#?} for {} peaks",
+            aps.elapsed(),
+            tot_peaks
+        );
+        info!(
+            "TransposedQuadIndex::add_frame_slice building buckets took {:#?}",
+            bbe
+        );
+        TransposedQuadIndex {
+            quad_settings,
+            frame_rts: out_rts,
+            frame_indices: out_indices,
+            peak_buckets: peak_bucket,
+        }
+    }
+
+    #[instrument(
+        name = "TransposedQuadIndex::build_inner_ref",
+        skip(self, peak_buckets),
+        fields(
+            num_frames = %self.frame_indices.len(),
+            quad_settings = format!("{:?}", self.quad_settings),
+            peak_buckets = %peak_buckets.len(),
+        ),
+        level = "debug",
+    )]
+    fn build_inner_ref(
+        self,
+        mut peak_buckets: HashMap<u32, PeakBucketBuilder>,
+        tot_peaks: u64,
+    ) -> HashMap<u32, PeakBucketBuilder> {
+        let mut added_peaks = 0;
 
         for slice_ind in 0..self.frame_indices.len() {
             let int_slice = &self.int_slices[slice_ind];
             let tof_slice = &self.tof_slices[slice_ind];
             let scan_slice = &self.scan_slices[slice_ind];
-            // let frame_index = self.frame_indices[slice_ind];
             let frame_rt = self.frame_rts[slice_ind] as f32;
 
-            // Q: is it worth to sort and add peaks in slices?
-
+            // Q: is it worth to sort and add peaks in slices? If we do it has to be one level
+            // higher, since within each slice, most tof indices would not repeat.
+            // A: Nope ... this is faster.
+            //
+            // In theory there are 3 things to consider:
+            // 1. Can we hold a vec that large? (u32::MAX in teory for a 32 bit system)
+            //    - For According to the playground ... 268_435_455 is the max number of
+            //    u32's that can be allocated ... in some of our data the MS1s have 500M peaks.
+            //    so even if we do it, we would need to batch it ...
+            //    as a note most MS2s are ~20M
+            // 2. Is the sorting slower than querying the hash map that many times?
+            //    - Sorting is slower ...
+            // 3. I am assuming that sequential import would let us grow each vec only once
+            //    per chunk addition instead of once per ... peak in the worst case (although vecs
+            //    grow in chunks of +25% ish ...)
+            //    - Might be true but we allocate the vecs with capacity, so they dont grow while
+            //    we iterate
+            //
             for ((inten, tof), scan) in int_slice
                 .iter()
                 .zip(tof_slice.iter())
@@ -291,53 +330,147 @@ impl TransposedQuadIndexBuilder {
                     .add_peak(*scan, *inten, frame_rt);
 
                 added_peaks += 1;
+                if added_peaks % 500_000 == 0 {
+                    debug!(
+                        "TransposedQuadIndex::build quad_settings={:?} added_peaks={:?}/{:?}",
+                        self.quad_settings, added_peaks, tot_peaks,
+                    );
+                }
             }
         }
-        let aps = aps.elapsed();
 
         if added_peaks != tot_peaks {
-            println!("TransposedQuadIndex::add_frame_slice failed at peak count check, expected: {}, real: {}", tot_peaks, added_peaks);
+            println!(
+                "TransposedQuadIndex::add_frame_slice failed at peak count check, expected: {}, real: {}",
+                tot_peaks, added_peaks
+            );
             panic!("TransposedQuadIndex::add_frame_slice failed at peak count check");
         }
 
-        for (tof, count) in tof_counts.into_iter().enumerate() {
-            if count > 0 {
-                let curr_bucket = peak_buckets.get(&(tof as u32)).unwrap();
-                let real_count = curr_bucket.len();
-                if real_count != count {
-                    println!("TransposedQuadIndex::build failed at tof bucket count check, expected: {}, real: {}", count, real_count);
-                    println!("Bucket -> {:?}", curr_bucket);
+        peak_buckets
+    }
 
-                    panic!("TransposedQuadIndex::build failed at tof bucket count check");
-                };
-            } else {
-                continue;
+    #[instrument(
+        name = "TransposedQuadIndex::batched_build_inner",
+        skip(self, peak_buckets),
+        fields(
+            num_frames = %self.frame_indices.len(),
+            quad_settings = format!("{:?}", self.quad_settings),
+            peak_buckets = %peak_buckets.len(),
+        ),
+        level = "debug",
+    )]
+    fn batched_build_inner(
+        self,
+        mut peak_buckets: HashMap<u32, PeakBucketBuilder>,
+        tot_peaks: u64,
+    ) -> HashMap<u32, PeakBucketBuilder> {
+        let info_prefix = format!("BatchedBuild: quad_settings={:?} ", self.quad_settings);
+        info!("{} start", info_prefix);
+        let num_slices = self.frame_indices.len();
+        let mut added_peaks = 0;
+
+        let mut peaks_in_chunk = 0;
+        let mut start = 0;
+        let mut end = 0;
+
+        while start < self.frame_indices.len() {
+            while peaks_in_chunk < 100_000_000 && end < self.frame_indices.len() {
+                peaks_in_chunk += self.int_slices[end].len();
+                end += 1;
             }
+
+            let concat_st = Instant::now();
+            let int_slice = self.int_slices[start..end].concat();
+            let tof_slice = self.tof_slices[start..end].concat();
+            let scan_slice = self.scan_slices[start..end].concat();
+            let rt_slice: Vec<f32> = self.frame_rts[start..end]
+                .iter()
+                .zip(self.tof_slices[start..end].iter())
+                .flat_map(|(rt, tofslice)| vec![*rt as f32; tofslice.len()])
+                .collect();
+
+            let concat_elapsed = concat_st.elapsed();
+
+            let sorting_st = Instant::now();
+
+            let out = sort_vecs_by_first!(tof_slice, scan_slice, int_slice, rt_slice);
+            let tof_slice = out.0;
+            let scan_slice = out.1;
+            let int_slice = out.2;
+            let rt_slice = out.3;
+
+            let sorting_elapsed = sorting_st.elapsed();
+
+            let insertion_st = Instant::now();
+            let mut slice_start = 0;
+            let mut slice_start_val = tof_slice[0];
+            while slice_start < int_slice.len() {
+                let mut local_slice_end = slice_start;
+                while tof_slice[local_slice_end] == slice_start_val {
+                    local_slice_end += 1;
+                    // There has to be a way to add this to the conditional above ...
+                    // But alas ... this works ...
+                    if local_slice_end == tof_slice.len() {
+                        break;
+                    }
+                }
+
+                let range_use = slice_start..local_slice_end;
+
+                peak_buckets
+                    .get_mut(&slice_start_val)
+                    .expect("Tof should have been added during the build")
+                    .extend_peaks(
+                        &scan_slice[range_use.clone()],
+                        &int_slice[range_use.clone()],
+                        &rt_slice[range_use.clone()],
+                    );
+
+                added_peaks += range_use.len() as u64;
+
+                assert!(
+                    slice_start_val == tof_slice[slice_start],
+                    "Not all elements in slice have the same tof value"
+                );
+
+                if local_slice_end == tof_slice.len() {
+                    break;
+                }
+                assert!(
+                    slice_start_val < tof_slice[local_slice_end],
+                    "The next element after this slice should have a higher tof value"
+                );
+
+                slice_start = local_slice_end;
+                slice_start_val = tof_slice[slice_start];
+            }
+
+            let insertion_elapsed = insertion_st.elapsed();
+            info!(
+                "BatchedBuild: quad_settings={:?} start={:?} end={:?}/{} peaks {}/{} concat took {:#?} sorting took: {:#?} insertion took {:#?}",
+                self.quad_settings,
+                start,
+                end,
+                num_slices,
+                added_peaks,
+                tot_peaks,
+                concat_elapsed,
+                sorting_elapsed,
+                insertion_elapsed,
+            );
+            start = end;
+            peaks_in_chunk = 0;
         }
 
-        let bb_st = Instant::now();
-        let peak_bucket = BTreeMap::from_par_iter(
-            peak_buckets
-                .into_par_iter()
-                .map(|(tof, pb)| (tof, pb.build())),
-        );
-
-        let bbe = bb_st.elapsed();
-        let elapsed = st.elapsed();
-        info!(
-            "TransposedQuadIndex::add_frame_slice adding peaks took {:#?} for {} peaks",
-            aps, tot_peaks
-        );
-        info!(
-            "TransposedQuadIndex::add_frame_slice building buckets took {:#?}",
-            bbe
-        );
-        info!("TransposedQuadIndex::build took {:#?}", elapsed);
-        TransposedQuadIndex {
-            quad_settings: self.quad_settings,
-            frame_rts: out_rts,
-            frame_indices: out_indices,
-            peak_buckets: peak_bucket,
+        if added_peaks != tot_peaks {
+            println!(
+                "TransposedQuadIndex::add_frame_slice failed at peak count check, expected: {}, real: {}",
+                tot_peaks, added_peaks
+            );
+            panic!("TransposedQuadIndex::add_frame_slice failed at peak count check");
         }
+
+        peak_buckets
     }
 }

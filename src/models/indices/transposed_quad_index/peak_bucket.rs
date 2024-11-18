@@ -1,7 +1,10 @@
-use crate::sort_by_indices_multi;
+use crate::sort_vecs_by_first;
 use crate::utils::compress_explode::compress_vec;
-use crate::utils::display::{glimpse_vec, GlimpseConfig};
-use crate::utils::sorting::argsort_by;
+use crate::utils::display::{
+    glimpse_vec,
+    GlimpseConfig,
+};
+use crate::utils::tolerance_ranges::IncludedRange;
 use std::fmt::Display;
 
 pub struct PeakInBucket {
@@ -93,16 +96,35 @@ impl PeakBucketBuilder {
         self.scan_offsets.push(scan_index);
     }
 
+    pub fn extend_peaks(
+        &mut self,
+        scan_indices: &[usize],
+        intensities: &[u32],
+        retention_times: &[f32],
+    ) {
+        self.scan_offsets.extend(scan_indices);
+        self.intensities.extend(intensities);
+        self.retention_times.extend(retention_times);
+    }
+
     pub fn build(mut self) -> PeakBucket {
-        let mut indices = argsort_by(&self.scan_offsets, |x| *x);
-        sort_by_indices_multi!(
-            &mut indices,
-            &mut self.scan_offsets,
-            &mut self.retention_times,
-            &mut self.intensities
-        );
+        let sorted =
+            sort_vecs_by_first!(&self.scan_offsets, &self.retention_times, &self.intensities);
+        self.scan_offsets = sorted.0;
+        self.retention_times = sorted.1;
+        self.intensities = sorted.2;
+
         // TODO consider if I really need to compress this.
-        let out = if self.scan_offsets.len() > 1000 {
+        // Options:
+        // 1. Change the compression of scans (I use the default in timsrust but im sure we can do
+        //    better) ...
+        //    - tuple of val-offset to prevent the long runs of non changing scans.
+        //    - btree of offsets?
+        // 2. Not compressing makes queries <10% slower, but building the index 10% faster ...
+        //    compressing all makes building the index 3x slower.
+        //
+        // let out = if false {
+        let out = if self.scan_offsets.len() > 500 {
             let compressed = compress_vec(&self.scan_offsets);
             PeakBucket {
                 intensities: self.intensities,
@@ -137,8 +159,8 @@ impl PeakBucket {
 
     pub fn query_peaks(
         &self,
-        scan_range: Option<(usize, usize)>,
-        rt_range: Option<(f32, f32)>,
+        scan_range: Option<IncludedRange<usize>>,
+        rt_range: Option<IncludedRange<f32>>,
     ) -> impl Iterator<Item = PeakInBucket> + '_ {
         match self.mode {
             PeakBucketMode::Compressed => self
@@ -154,11 +176,11 @@ impl PeakBucket {
 
     pub fn query_peaks_sorted(
         &self,
-        scan_range: Option<(usize, usize)>,
-        rt_range: Option<(f32, f32)>,
+        scan_range: Option<IncludedRange<usize>>,
+        rt_range: Option<IncludedRange<f32>>,
     ) -> impl Iterator<Item = PeakInBucket> + '_ {
         let (scan_min, scan_max) = match scan_range {
-            Some((scan_low, scan_high)) => (scan_low, scan_high),
+            Some(x) => x.into(),
             None => (
                 0,
                 *(self
@@ -186,8 +208,8 @@ impl PeakBucket {
             }
 
             let retention_time = self.retention_times[x];
-            if let Some((low, high)) = rt_range {
-                if retention_time < low || retention_time > high {
+            if let Some(x) = rt_range {
+                if !x.contains(retention_time) {
                     return None;
                 }
             }
@@ -201,11 +223,11 @@ impl PeakBucket {
 
     pub fn query_peaks_compressed(
         &self,
-        scan_range: Option<(usize, usize)>,
-        rt_range: Option<(f32, f32)>,
+        scan_range: Option<IncludedRange<usize>>,
+        rt_range: Option<IncludedRange<f32>>,
     ) -> impl Iterator<Item = PeakInBucket> + '_ {
         let scan_range = match scan_range {
-            Some((scan_low, scan_high)) => scan_low..scan_high.min(self.scan_offsets.len() - 1),
+            Some(x) => x.start()..x.end().min(self.scan_offsets.len() - 1),
             None => 0..(self.scan_offsets.len() - 1),
         };
         scan_range
@@ -216,10 +238,10 @@ impl PeakBucket {
                 (peak_index_start..peak_index_end).map(move |peak_index| {
                     let retention_time = self.retention_times[peak_index];
 
-                    if let Some((low, high)) = rt_range {
-                        if retention_time < low || retention_time > high {
+                    if let Some(x) = rt_range {
+                        if !x.contains(retention_time) {
                             return None;
-                        }
+                        };
                     }
 
                     let intensity = self.intensities[peak_index];
