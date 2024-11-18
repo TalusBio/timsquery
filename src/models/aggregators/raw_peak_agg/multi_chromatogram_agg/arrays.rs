@@ -27,12 +27,17 @@ pub struct PartitionedCMGArrayStats<FH: Clone + Eq + Serialize + Hash + Send + S
     // seem to be that useful.
     pub intensities: HashMap<FH, Vec<u64>>,
     pub cosine_similarity: Option<Vec<f64>>,
+
+    pub expected_tof_index: HashMap<FH, u32>,
+    pub expected_scan_index: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PartitionedCMGArrays<FH: Clone + Eq + Serialize + Hash + Send + Sync> {
     pub transition_stats: Vec<ChromatomobilogramStatsArrays>,
     pub transition_keys: Vec<FH>,
+    pub expected_scan_index: usize,
+    pub expected_tof_indices: Vec<u32>,
     pub expected_intensities: Option<Vec<f32>>,
 }
 
@@ -84,6 +89,7 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug>
         uniq_rts.sort_unstable();
         uniq_rts.dedup();
         let mut out_expected_intensities: Vec<f32> = Vec::with_capacity(item.keys.len());
+        let mut out_expected_tof_indices: Vec<u32> = Vec::with_capacity(item.keys.len());
 
         for (id_ind, _id_key) in item.keys.iter().enumerate() {
             let mut id_cmgs = ChromatomobilogramStatsArrays::new();
@@ -94,6 +100,7 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug>
             if item.expected_intensities.is_some() {
                 out_expected_intensities.push(item.expected_intensities.as_ref().unwrap()[id_ind]);
             }
+            out_expected_tof_indices.push(item.expected_tof_indices[id_ind]);
             let local_id_mapping = local_id_mapping.as_ref().unwrap();
 
             for rt_key in uniq_rts.iter() {
@@ -129,6 +136,8 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug>
             transition_stats,
             transition_keys: item.keys,
             expected_intensities: out_expected_intensities,
+            expected_tof_indices: out_expected_tof_indices,
+            expected_scan_index: item.expected_scan_index,
         }
     }
 }
@@ -139,6 +148,14 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> From<PartitionedCMGArrays<
     fn from(other: PartitionedCMGArrays<FH>) -> Self {
         // TODO ... maybe refactor this ... RN its king of ugly.
 
+        // TODO: make a constructor to make sure everything here
+        // Is actually getting added and is the right size/shape.
+        let expected_tof_index = other
+            .transition_keys
+            .iter()
+            .zip(other.expected_tof_indices.iter())
+            .map(|(k, v)| (k.clone(), *v))
+            .collect();
         let mut out = PartitionedCMGArrayStats {
             retention_time_miliseconds: Vec::new(),
             scan_index_means: HashMap::new(),
@@ -149,6 +166,8 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> From<PartitionedCMGArrays<
             log_intensity_products: Vec::new(),
             npeaks: Vec::new(),
             cosine_similarity: None,
+            expected_tof_index,
+            expected_scan_index: other.expected_scan_index,
         };
 
         let unique_rts = other

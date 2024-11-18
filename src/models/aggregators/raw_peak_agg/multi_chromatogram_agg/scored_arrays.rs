@@ -8,6 +8,7 @@ use crate::models::aggregators::rolling_calculators::{
     calculate_value_vs_baseline,
 };
 use crate::models::aggregators::streaming_aggregator::RunningStatsCalculator;
+use crate::sort_vecs_by_first;
 use crate::utils::dtw::dtw_max;
 use crate::utils::math::lnfact_float;
 use serde::Serialize;
@@ -30,6 +31,8 @@ pub struct PartitionedCMGScoredStatsArrays<FH: Clone + Eq + Serialize + Hash + S
     pub scores: ChromatogramScores,
     pub transition_mobilities: HashMap<FH, Vec<f64>>,
     pub transition_mzs: HashMap<FH, Vec<f64>>,
+    pub expected_mzs: HashMap<FH, f64>,
+    pub expected_mobility: f64,
     pub transition_intensities: HashMap<FH, Vec<u64>>,
     pub apex_primary_score_index: usize,
 }
@@ -42,6 +45,11 @@ pub struct ScoresAtTime {
     pub cosine_similarity: f64,
     pub npeaks: u8,
     pub retention_time_miliseconds: u32,
+    pub average_mobility: f64,
+    pub summed_intensity: u64,
+    pub mz_errors: Vec<f64>,
+    pub mobility_errors: Vec<f64>,
+    pub transition_intensities: Vec<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -54,6 +62,26 @@ pub struct ChromatogramScores {
     pub norm_lazyerscore_vs_baseline: Vec<f64>,
     pub npeaks: Vec<u8>,
     pub cosine_similarity: Option<Vec<f64>>,
+}
+
+impl ScoresAtTime {
+    pub fn sorted_transition_intensities(&self) -> (Vec<u64>, Vec<f64>, Vec<f64>) {
+        let sorted_vecs = sort_vecs_by_first!(
+            &self.transition_intensities,
+            &self.mobility_errors,
+            &self.mz_errors
+        );
+
+        let partition_point = sorted_vecs.0.partition_point(|&x| x < 10);
+        let mut transition_intensities = sorted_vecs.0[partition_point..].to_vec();
+        transition_intensities.reverse();
+        let mut mobility_errors = sorted_vecs.2[partition_point..].to_vec();
+        mobility_errors.reverse();
+        let mut mz_errors = sorted_vecs.1[partition_point..].to_vec();
+        mz_errors.reverse();
+
+        (transition_intensities, mobility_errors, mz_errors)
+    }
 }
 
 impl ChromatogramScores {
@@ -160,6 +188,40 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug>
         };
         let npeaks = self.scores.npeaks[index];
         let retention_time_miliseconds = self.retention_time_miliseconds[index];
+        // TODO decide whether to report errors where the expected val is 0.
+
+        let transition_msz: HashMap<FH, f64> = self
+            .transition_mzs
+            .iter()
+            .map(|x| (x.0.clone(), x.1[index]))
+            .collect();
+        let transition_mobilities: HashMap<FH, f64> = self
+            .transition_mobilities
+            .iter()
+            .map(|x| (x.0.clone(), x.1[index]))
+            .collect();
+        let transition_intensities_map: HashMap<FH, u64> = self
+            .transition_intensities
+            .iter()
+            .map(|x| (x.0.clone(), x.1[index]))
+            .collect();
+
+        let key_order: Vec<FH> = self.transition_intensities.keys().cloned().collect();
+        let mz_errors: Vec<f64> = key_order
+            .iter()
+            .map(|x| self.expected_mzs[x] - transition_msz[x])
+            .collect();
+        let mobility_errors: Vec<f64> = key_order
+            .iter()
+            .map(|x| self.expected_mobility - transition_mobilities[x])
+            .collect();
+        let transition_intensities: Vec<u64> = key_order
+            .iter()
+            .map(|x| transition_intensities_map[x])
+            .collect();
+
+        let summed_intensity = self.summed_intensity[index];
+        let average_mobility = self.average_mobility[index];
 
         ScoresAtTime {
             lazyerscore,
@@ -168,6 +230,11 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug>
             cosine_similarity,
             npeaks,
             retention_time_miliseconds,
+            mz_errors,
+            mobility_errors,
+            average_mobility,
+            summed_intensity,
+            transition_intensities,
         }
     }
 
@@ -277,6 +344,13 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> PartitionedCMGScoredStatsA
             })
             .collect();
 
+        let expected_mobility = mobility_converter.convert(other.expected_scan_index as f64);
+        let expected_mzs = other
+            .expected_tof_index
+            .into_iter()
+            .map(|x| (x.0, mz_converter.convert(x.1 as f64)))
+            .collect();
+
         PartitionedCMGScoredStatsArrays {
             retention_time_miliseconds: other.retention_time_miliseconds,
             average_mobility,
@@ -286,6 +360,8 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> PartitionedCMGScoredStatsA
             transition_intensities: other.intensities,
             apex_primary_score_index,
             scores,
+            expected_mzs,
+            expected_mobility,
         }
     }
 }

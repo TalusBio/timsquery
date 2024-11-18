@@ -43,13 +43,17 @@ pub struct ChromatomobilogramStats {
     // and retention times.
     pub scan_tof_mapping: HashMap<u32, ScanTofStatsCalculatorPair, BuildNoHashHasher<u32>>,
     pub id: u64,
+    pub expected_tof_index: u32,
+    pub expected_scan_index: usize,
 }
 
 impl ChromatomobilogramStats {
-    pub fn new(id: u64) -> Self {
+    pub fn new(id: u64, expected_tof_index: u32, expected_scan_index: usize) -> Self {
         Self {
             scan_tof_mapping: HashMap::with_hasher(BuildHasherDefault::default()),
             id,
+            expected_tof_index,
+            expected_scan_index,
         }
     }
 }
@@ -65,6 +69,8 @@ pub struct ChromatomobilogramStatsArrays {
     pub scan_index_sds: Vec<f64>,
     pub intensities: Vec<u64>,
     pub expected_intensity: Option<f64>,
+    pub expected_tof_index: u32,
+    pub expected_scan_index: usize,
 }
 
 impl ChromatomobilogramStatsArrays {

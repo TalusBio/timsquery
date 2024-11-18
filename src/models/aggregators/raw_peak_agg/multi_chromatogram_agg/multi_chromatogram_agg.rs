@@ -17,6 +17,7 @@ use serde::Serialize;
 use std::hash::Hash;
 
 use timsrust::converters::{
+    ConvertableDomain,
     Scan2ImConverter,
     Tof2MzConverter,
 };
@@ -48,18 +49,23 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug> MultiCMG
         // preserve only the expected intensities.
         let elution_group_ref = elution_group.clone();
 
-        let fragment_keys = elution_group
+        let (fragment_keys, fragment_tof): (Vec<FH>, Vec<u32>) = elution_group
             .fragment_mzs
-            .keys()
-            .cloned()
-            .collect::<Vec<FH>>();
+            .iter()
+            .map(|(k, v)| {
+                let tof = self.converters.0.invert(*v) as u32;
+                (k.clone(), tof)
+            })
+            .unzip();
 
-        let precursor_keys: Vec<usize> = elution_group
+        let (precursor_keys, precursor_tof): (Vec<usize>, Vec<u32>) = elution_group
             .precursor_mzs
             .iter()
             .enumerate()
-            .map(|x| x.0)
-            .collect();
+            .map(|(i, v)| (i, self.converters.0.invert(*v) as u32))
+            .unzip();
+
+        let expect_scan_index = self.converters.1.invert(elution_group.mobility) as usize;
 
         let exp_fragment_intensities: Option<Vec<f32>> =
             if elution_group.expected_fragment_intensity.is_some() {
@@ -78,8 +84,15 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug> MultiCMG
             ms1_stats: ParitionedCMGAggregator::new(
                 precursor_keys,
                 elution_group.expected_precursor_intensity.to_owned(),
+                expect_scan_index,
+                precursor_tof,
             ),
-            ms2_stats: ParitionedCMGAggregator::new(fragment_keys, exp_fragment_intensities),
+            ms2_stats: ParitionedCMGAggregator::new(
+                fragment_keys,
+                exp_fragment_intensities,
+                expect_scan_index,
+                fragment_tof,
+            ),
             id: elution_group.id,
             context: None,
             buffer: None,

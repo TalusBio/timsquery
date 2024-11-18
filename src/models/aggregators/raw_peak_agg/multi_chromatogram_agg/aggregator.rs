@@ -18,13 +18,20 @@ pub struct ParitionedCMGAggregator<
     pub keys: Vec<FH>,
     pub context_key_num: usize,
     pub expected_intensities: Option<Vec<f32>>,
+    pub expected_scan_index: usize,
+    pub expected_tof_indices: Vec<u32>,
     pub context_buffer: SparseRTCollection,
 }
 
 impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug>
     ParitionedCMGAggregator<FH>
 {
-    pub fn new(keys: Vec<FH>, expected_intensities: Option<Vec<f32>>) -> Self {
+    pub fn new(
+        keys: Vec<FH>,
+        expected_intensities: Option<Vec<f32>>,
+        expected_scan_index: usize,
+        expected_tof_indices: Vec<u32>,
+    ) -> Self {
         let mut scan_tof_calc = Vec::with_capacity(keys.len());
         for _ in 0..keys.len() {
             scan_tof_calc.push(None);
@@ -32,12 +39,15 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug>
         if let Some(exp_intens) = expected_intensities.as_ref() {
             assert!(exp_intens.len() == keys.len());
         }
+        assert!(expected_tof_indices.len() == keys.len());
 
         Self {
             scan_tof_calc,
             keys,
             context_key_num: 0,
             expected_intensities,
+            expected_scan_index,
+            expected_tof_indices,
             context_buffer: SparseRTCollection::with_hasher(BuildNoHashHasher::default()),
         }
     }
