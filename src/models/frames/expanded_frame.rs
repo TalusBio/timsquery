@@ -324,11 +324,11 @@ pub fn par_expand_and_arrange_frames(
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CentroidingSettings {
-    ims_tol_pct: f64,
-    mz_tol_ppm: f64,
-    window_width: usize,
-    max_ms1_peaks: usize,
-    max_ms2_peaks: usize,
+    pub ims_tol_pct: f64,
+    pub mz_tol_ppm: f64,
+    pub window_width: usize,
+    pub max_ms1_peaks: usize,
+    pub max_ms2_peaks: usize,
 }
 
 impl Default for CentroidingSettings {
@@ -384,7 +384,7 @@ impl FrameProcessingConfig {
     }
 }
 
-fn warn_and_skip_badframes(
+pub fn warn_and_skip_badframes(
     frame_iter: impl ParallelIterator<Item = std::result::Result<Frame, FrameReaderError>>,
 ) -> impl ParallelIterator<Item = Frame> {
     frame_iter.filter_map(|x| {
@@ -716,7 +716,7 @@ pub fn par_expand_and_centroid_frames(
     out
 }
 
-fn centroid_frameslice_window2(
+fn centroid_frameslice_window(
     frameslices: &[ExpandedFrameSlice<SortedState>],
     ims_tol_pct: f64,
     mz_tol_ppm: f64,
@@ -781,7 +781,7 @@ pub fn par_lazy_centroid_frameslices(
     assert!(frameslices.len() > window_width);
 
     let local_lambda = |fss: &[ExpandedFrameSlice<SortedState>]| {
-        centroid_frameslice_window2(
+        centroid_frameslice_window(
             fss,
             ims_tol_pct,
             mz_tol_ppm,
