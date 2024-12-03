@@ -256,8 +256,7 @@ mod tests {
 
         let result = lazy_centroid_weighted_frame(
             &peak_refs,
-            0,  // reference_index
-            10, // max_peaks
+            0, // reference_index
             test_tof_tolerance,
             test_ims_tolerance,
         );
@@ -317,7 +316,7 @@ mod tests {
         ];
 
         let result =
-            lazy_centroid_weighted_frame(&peak_refs, 0, 10, test_tof_tolerance, test_ims_tolerance);
+            lazy_centroid_weighted_frame(&peak_refs, 0, test_tof_tolerance, test_ims_tolerance);
 
         let ((tof_array, intensity_array), ims_array) = result;
         assert_eq!(tof_array.len(), 0);
@@ -342,7 +341,7 @@ mod tests {
         ];
 
         let result =
-            lazy_centroid_weighted_frame(&peak_refs, 0, 10, test_tof_tolerance, test_ims_tolerance);
+            lazy_centroid_weighted_frame(&peak_refs, 0, test_tof_tolerance, test_ims_tolerance);
 
         let ((tof_array, _), ims_array) = result;
 
@@ -363,7 +362,6 @@ mod tests {
         lazy_centroid_weighted_frame(
             &peak_refs,
             2, // Invalid index
-            10,
             test_tof_tolerance,
             test_ims_tolerance,
         );
