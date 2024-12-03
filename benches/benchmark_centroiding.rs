@@ -1,11 +1,9 @@
-use rayon::prelude::*;
 use std::env;
 use std::time::Instant;
 use timsquery::models::frames::expanded_frame::{
     par_expand_and_arrange_frames,
     par_expand_and_centroid_frames,
     warn_and_skip_badframes,
-    CentroidingSettings,
     FrameProcessingConfig,
 };
 use timsrust::readers::{
@@ -46,7 +44,7 @@ fn main() {
     let ms1_iter = warn_and_skip_badframes(ms1_iter);
     let start = Instant::now();
     println!("Starting expansion");
-    let expanded_ms1_frames = match centroiding_config {
+    let _expanded_ms1_frames = match centroiding_config {
         FrameProcessingConfig::Centroided {
             settings,
             ims_converter,
@@ -56,7 +54,6 @@ fn main() {
             settings.ims_tol_pct,
             settings.mz_tol_ppm,
             settings.window_width,
-            settings.max_ms1_peaks,
             &ims_converter.unwrap(),
             &mz_converter.unwrap(),
         ),

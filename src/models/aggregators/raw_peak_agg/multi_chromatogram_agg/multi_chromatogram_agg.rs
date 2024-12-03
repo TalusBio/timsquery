@@ -13,10 +13,7 @@ use crate::models::elution_group::ElutionGroup;
 use crate::models::frames::raw_peak::RawPeak;
 use crate::models::queries::MsLevelContext;
 use crate::traits::aggregator::Aggregator;
-use crate::{
-    DataProcessingError,
-    TimsqueryError,
-};
+use crate::TimsqueryError;
 use serde::Serialize;
 use std::hash::Hash;
 

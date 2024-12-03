@@ -1,9 +1,5 @@
 use crate::sort_vecs_by_first;
-use tracing::{
-    error,
-    info,
-    warn,
-};
+use tracing::error;
 
 use super::tolerance_ranges::IncludedRange;
 
@@ -64,9 +60,9 @@ impl<'a> PeakArrayRefs<'a> {
 struct Peak {
     center_tof: u32,
     center_ims: usize,
-    max_intensity: u32,
+    // max_intensity: u32,
     agg_intensity: u32,
-    point_count: usize,
+    // point_count: usize,
 }
 struct OrderItem {
     intensity: u32,
@@ -78,7 +74,6 @@ struct OrderItem {
 fn find_gaussian_peaks(
     items: &[OrderItem],
     min_points: usize,
-    min_apex_intensity: u32,
     min_agg_intensity: u32,
     tof_tol_range_fn: impl Fn(u32) -> IncludedRange<u32>,
     ims_tol_range_fn: impl Fn(usize) -> IncludedRange<usize>,
@@ -96,46 +91,42 @@ fn find_gaussian_peaks(
         }
 
         // Fast pre-filtering: check if this point could be a peak center
-        if current.intensity < min_apex_intensity {
-            i += 1;
-            continue;
-        }
+        // I could make a smarter version of this ... like to get the cumulative
+        // sum of intensities and then get the intensity of each window very quickly.
+        // if current.weight < min_apex_intensity {
+        //     i += 1;
+        //     continue;
+        // }
 
         // Get tolerance ranges for current point
         let tof_range = tof_tol_range_fn(current.tof);
         let ims_range = ims_tol_range_fn(current.ims);
 
         // Find all points within tolerance ranges
-        let window_start =
-            match items[..i].binary_search_by_key(&tof_range.start(), |item| item.tof) {
-                Ok(idx) | Err(idx) => idx,
-            };
-
-        let window_end = match items[i..].binary_search_by_key(&tof_range.end(), |item| item.tof) {
-            Ok(idx) | Err(idx) => i + idx,
-        };
+        let st = tof_range.start();
+        let ep = tof_range.end();
+        let window_start = items[..i].partition_point(|item| item.tof < st);
+        let window_end = items[i..].partition_point(|item| item.tof < ep) + i;
 
         // Count points and check intensity distribution
         let mut point_count = 0;
         let mut is_peak = true;
-        let max_intensity = current.intensity;
+        let max_weight = current.weight;
         let mut agg_intensity = 0;
-        let mut max_intensity_idx = i;
 
         for j in window_start..window_end {
+            if taken[j] {
+                continue;
+            };
             let point = &items[j];
 
             if ims_range.contains(point.ims) {
-                if taken[j] {
-                    continue;
-                }
                 taken_queue.push(j);
                 point_count += 1;
                 agg_intensity += point.intensity;
 
                 // Track maximum intensity
-                if point.intensity > max_intensity {
-                    max_intensity_idx = j;
+                if point.weight > max_weight {
                     is_peak = false; // Current point isn't the peak if we found higher intensity
                     break;
                 }
@@ -144,13 +135,10 @@ fn find_gaussian_peaks(
 
         // If this is a valid peak, record it
         if is_peak && agg_intensity >= min_agg_intensity && point_count >= min_points {
-            let apex = &items[max_intensity_idx];
             peaks.push(Peak {
-                center_tof: apex.tof,
-                center_ims: apex.ims,
-                max_intensity: apex.intensity,
+                center_tof: current.tof,
+                center_ims: current.ims,
                 agg_intensity,
-                point_count,
             });
             for j in taken_queue.iter() {
                 taken[*j] = true;
@@ -179,7 +167,6 @@ fn find_gaussian_peaks(
 pub fn lazy_centroid_weighted_frame<'a>(
     peak_refs: &'a [PeakArrayRefs<'a>],
     reference_index: usize,
-    max_peaks: usize,
     tof_tol_range_fn: impl Fn(u32) -> IncludedRange<u32>,
     ims_tol_range_fn: impl Fn(usize) -> IncludedRange<usize>,
 ) -> CentroidedVecs {
@@ -217,7 +204,7 @@ pub fn lazy_centroid_weighted_frame<'a>(
     order.sort_unstable_by(|a, b| a.tof.cmp(&b.tof));
     assert!(order[tot_size - 1].tof > order[0].tof);
 
-    let outpeaks = find_gaussian_peaks(&order, 1, 20, 100, &tof_tol_range_fn, ims_tol_range_fn);
+    let outpeaks = find_gaussian_peaks(&order, 1, 100, &tof_tol_range_fn, ims_tol_range_fn);
 
     let ((agg_intensity, agg_tof), agg_ims) = outpeaks
         .into_iter()

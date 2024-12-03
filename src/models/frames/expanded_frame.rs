@@ -327,8 +327,6 @@ pub struct CentroidingSettings {
     pub ims_tol_pct: f64,
     pub mz_tol_ppm: f64,
     pub window_width: usize,
-    pub max_ms1_peaks: usize,
-    pub max_ms2_peaks: usize,
 }
 
 impl Default for CentroidingSettings {
@@ -337,8 +335,6 @@ impl Default for CentroidingSettings {
             ims_tol_pct: 1.5,
             mz_tol_ppm: 15.0,
             window_width: 3,
-            max_ms1_peaks: 100_000,
-            max_ms2_peaks: 20_000,
         }
     }
 }
@@ -433,7 +429,6 @@ pub fn par_read_and_expand_frames(
                 settings.ims_tol_pct,
                 settings.mz_tol_ppm,
                 settings.window_width,
-                settings.max_ms2_peaks,
                 &ims_converter.unwrap(),
                 &mz_converter.unwrap(),
             ),
@@ -463,7 +458,6 @@ pub fn par_read_and_expand_frames(
             settings.ims_tol_pct,
             settings.mz_tol_ppm,
             settings.window_width,
-            settings.max_ms1_peaks,
             &ims_converter.unwrap(),
             &mz_converter.unwrap(),
         ),
@@ -682,7 +676,6 @@ pub fn par_expand_and_centroid_frames(
     ims_tol_pct: f64,
     mz_tol_ppm: f64,
     window_width: usize,
-    max_peaks: usize,
     ims_converter: &Scan2ImConverter,
     mz_converter: &Tof2MzConverter,
 ) -> HashMap<Option<SingleQuadrupoleSetting>, Vec<ExpandedFrameSlice<SortedState>>> {
@@ -700,7 +693,6 @@ pub fn par_expand_and_centroid_frames(
                     window_width,
                     ims_tol_pct,
                     mz_tol_ppm,
-                    max_peaks,
                     ims_converter,
                     mz_converter,
                 );
@@ -720,7 +712,6 @@ fn centroid_frameslice_window(
     frameslices: &[ExpandedFrameSlice<SortedState>],
     ims_tol_pct: f64,
     mz_tol_ppm: f64,
-    max_peaks: usize,
     ims_converter: &Scan2ImConverter,
     mz_converter: &Tof2MzConverter,
 ) -> ExpandedFrameSlice<SortedState> {
@@ -735,7 +726,6 @@ fn centroid_frameslice_window(
     let ((tof_array, intensity_array), ims_array) = lazy_centroid_weighted_frame(
         &peak_refs,
         reference_index,
-        max_peaks,
         |tof| tof_tol_range(tof, mz_tol_ppm, mz_converter),
         |scan| scan_tol_range(scan, ims_tol_pct, ims_converter),
     );
@@ -762,7 +752,6 @@ pub fn par_lazy_centroid_frameslices(
     window_width: usize,
     ims_tol_pct: f64,
     mz_tol_ppm: f64,
-    max_peaks: usize,
     ims_converter: &Scan2ImConverter,
     mz_converter: &Tof2MzConverter,
 ) -> Vec<ExpandedFrameSlice<SortedState>> {
@@ -781,14 +770,7 @@ pub fn par_lazy_centroid_frameslices(
     assert!(frameslices.len() > window_width);
 
     let local_lambda = |fss: &[ExpandedFrameSlice<SortedState>]| {
-        centroid_frameslice_window(
-            fss,
-            ims_tol_pct,
-            mz_tol_ppm,
-            max_peaks,
-            ims_converter,
-            mz_converter,
-        )
+        centroid_frameslice_window(fss, ims_tol_pct, mz_tol_ppm, ims_converter, mz_converter)
     };
 
     frameslices
