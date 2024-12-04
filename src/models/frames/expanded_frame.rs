@@ -21,6 +21,7 @@ use crate::utils::tolerance_ranges::{
     IncludedRange,
 };
 use rayon::prelude::*;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -443,7 +444,8 @@ pub fn par_read_and_expand_frames(
         .map(|x| ExpandedQuadSliceInfo::new(x))
         .collect();
 
-    println!("Slice info: {:?}", slice_infos);
+    let tbl = Table::new(slice_infos);
+    println!("Slice info: \n{}", tbl);
 
     info!("Processing MS1 frames");
     let ms1_iter = frame_reader.parallel_filter(|x| x.ms_level == MSLevel::MS1);
@@ -469,11 +471,67 @@ pub fn par_read_and_expand_frames(
     Ok(all_expanded_frames)
 }
 
+use tabled::{
+    Table,
+    Tabled,
+};
+
 #[derive(Debug, Clone, Copy)]
 pub struct ExpandedQuadSliceInfo {
     pub quad_settings: Option<SingleQuadrupoleSetting>,
     pub cycle_time_seconds: f64,
     pub peak_width_seconds: Option<f64>,
+}
+
+impl Tabled for ExpandedQuadSliceInfo {
+    const LENGTH: usize = 7;
+
+    // Required methods
+    fn fields(&self) -> Vec<Cow<'_, str>> {
+        match self.quad_settings {
+            Some(qs) => {
+                let qr = qs.ranges;
+                let qi = qs.index;
+
+                let scan_ranges = format!("{:?}-{:?}", qr.scan_start, qr.scan_end);
+                let quad_ranges = format!("{:?}-{:?}", qr.isolation_low, qr.isolation_high);
+                vec![
+                    Cow::Owned(qi.major_index.to_string()),
+                    Cow::Owned(qi.sub_index.to_string()),
+                    Cow::Owned(quad_ranges),
+                    Cow::Owned(scan_ranges),
+                    Cow::Owned(qr.collision_energy.to_string()),
+                    Cow::Owned(self.cycle_time_seconds.to_string()),
+                    Cow::Owned(
+                        self.peak_width_seconds
+                            .as_ref()
+                            .map(|x| x.to_string())
+                            .unwrap_or("None".to_string()),
+                    ),
+                ]
+            }
+            None => vec![
+                Cow::Borrowed("None"),
+                Cow::Borrowed("None"),
+                Cow::Owned("None".to_string()),
+                Cow::Owned("None".to_string()),
+                Cow::Owned("None".to_string()),
+                Cow::Owned("None".to_string()),
+            ],
+        }
+    }
+
+    fn headers() -> Vec<Cow<'static, str>> {
+        vec![
+            Cow::Borrowed("Major index"),
+            Cow::Borrowed("Minor index"),
+            Cow::Borrowed("Quad ranges"),
+            Cow::Borrowed("Scan ranges"),
+            Cow::Borrowed("CE"),
+            Cow::Borrowed("Cycle time"),
+            Cow::Borrowed("Peak width"),
+        ]
+    }
 }
 
 impl ExpandedQuadSliceInfo {
