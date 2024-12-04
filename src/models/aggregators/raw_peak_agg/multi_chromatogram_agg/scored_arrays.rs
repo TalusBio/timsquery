@@ -22,6 +22,20 @@ use timsrust::converters::{
 };
 use tracing::debug;
 
+// fn check_nonnan(x: &[f64]) -> Result<()> {
+//     if x.iter().any(|y| y.is_infinite() || y.is_nan()) {
+//         let mut out = Vec::with_capacity(x.len());
+//         for (i, val) in x.iter().enumerate() {
+//             if !(val.is_finite() || val.is_nan()) {
+//                 out.push((i, *val));
+//             }
+//         }
+//         Err(crate::errors::DataProcessingError::UnexpectedInfiniteErrors(out).into())
+//     } else {
+//         Ok(())
+//     }
+// }
+
 // This name is starting to get really long ...
 #[derive(Debug, Clone, Serialize)]
 pub struct PartitionedCMGScoredStatsArrays<FH: Clone + Eq + Serialize + Hash + Send + Sync> {
@@ -87,7 +101,7 @@ impl ScoresAtTime {
 impl ChromatogramScores {
     pub fn new<T: Clone + Eq + Serialize + Hash + Send + Sync>(
         arrays: &PartitionedCMGArrayStats<T>,
-    ) -> Self {
+    ) -> Result<Self> {
         let lazy_hyperscore = calculate_lazy_hyperscore(&arrays.npeaks, &arrays.summed_intensity);
         let basline_window_len = 1 + (arrays.retention_time_miliseconds.len() / 20);
         let lazy_hyperscore_vs_baseline =
@@ -141,7 +155,14 @@ impl ChromatogramScores {
             "Failed sanity check"
         );
 
-        ChromatogramScores {
+        // check_nonnan(&lazy_hyperscore)?;
+        // check_nonnan(&lazyerscore)?;
+        // check_nonnan(&lazy_hyperscore_vs_baseline)?;
+        // check_nonnan(&lazyerscore_vs_baseline)?;
+        // check_nonnan(&norm_hyperscore_vs_baseline)?;
+        // check_nonnan(&norm_lazyerscore_vs_baseline)?;
+
+        Ok(ChromatogramScores {
             lazy_hyperscore,
             lazyerscore,
             lazy_hyperscore_vs_baseline,
@@ -150,7 +171,7 @@ impl ChromatogramScores {
             norm_lazyerscore_vs_baseline,
             npeaks: arrays.npeaks.to_owned(),
             cosine_similarity: arrays.cosine_similarity.to_owned(),
-        }
+        })
     }
 
     fn get_apex_score_index(&self) -> usize {
@@ -279,7 +300,7 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug>
             // The aggregator map to the closest cycle, rather than the frame.
             // 2. Fix the wrapping to not generate -inf values.
             let score = self_cos * other_cos * other_lzb;
-            if score.is_infinite() {
+            if score.is_infinite() || score.is_nan() {
                 out.push(0.0);
                 continue;
             }
@@ -308,8 +329,8 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> PartitionedCMGScoredStatsA
         other: PartitionedCMGArrayStats<FH>,
         mz_converter: &Tof2MzConverter,
         mobility_converter: &Scan2ImConverter,
-    ) -> Self {
-        let scores = ChromatogramScores::new(&other);
+    ) -> Result<Self> {
+        let scores = ChromatogramScores::new(&other)?;
         let apex_primary_score_index = scores.get_apex_score_index();
         let average_mobility = other
             .weighted_scan_index_mean
@@ -351,7 +372,7 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> PartitionedCMGScoredStatsA
             .map(|x| (x.0, mz_converter.convert(x.1 as f64)))
             .collect();
 
-        PartitionedCMGScoredStatsArrays {
+        Ok(PartitionedCMGScoredStatsArrays {
             retention_time_miliseconds: other.retention_time_miliseconds,
             average_mobility,
             summed_intensity: other.summed_intensity,
@@ -362,6 +383,6 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync> PartitionedCMGScoredStatsA
             scores,
             expected_mzs,
             expected_mobility,
-        }
+        })
     }
 }

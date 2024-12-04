@@ -47,6 +47,8 @@ pub enum DataProcessingError {
     ExpectedNonEmptyData,
     InsufficientData { real: usize, expected: usize },
     ExpectedVectorSameLength(usize, usize),
+    UnexpectedInfiniteError(usize),
+    UnexpectedInfiniteErrors(Vec<(usize, f64)>),
 }
 
 impl From<DataProcessingError> for TimsqueryError {

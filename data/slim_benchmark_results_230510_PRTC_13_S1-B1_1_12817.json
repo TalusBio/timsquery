@@ -7,87 +7,87 @@
     {
       "name": "RawFileIndex",
       "context": "BatchAccess_narrow_rt",
-      "mean_duration_seconds": 32.022435916,
-      "mean_duration_human_readable": "32.022435916s",
-      "setup_time_seconds": 0.078233583,
-      "setup_time_human_readable": "78.233583ms",
+      "mean_duration_seconds": 30.18029,
+      "mean_duration_human_readable": "30.18029s",
+      "setup_time_seconds": 0.080955625,
+      "setup_time_human_readable": "80.955625ms",
       "note": "RawFileIndex::query_multi_group aggregated 68182 "
     },
     {
       "name": "ExpandedRawFileIndex",
       "context": "BatchAccess_narrow_rt",
-      "mean_duration_seconds": 0.009044057747747747,
-      "mean_duration_human_readable": "9.044057ms",
-      "setup_time_seconds": 5.633474292,
-      "setup_time_human_readable": "5.633474292s",
+      "mean_duration_seconds": 0.008114801080645164,
+      "mean_duration_human_readable": "8.114801ms",
+      "setup_time_seconds": 6.046508917,
+      "setup_time_human_readable": "6.046508917s",
       "note": "ExpandedRawFileIndex::query_multi_group aggregated 571213 "
     },
     {
       "name": "ExpandedRawFileIndex",
       "context": "BatchAccess_full_rt",
-      "mean_duration_seconds": 2.249131542,
-      "mean_duration_human_readable": "2.249131542s",
-      "setup_time_seconds": 6.053857416,
-      "setup_time_human_readable": "6.053857416s",
+      "mean_duration_seconds": 3.257979625,
+      "mean_duration_human_readable": "3.257979625s",
+      "setup_time_seconds": 6.282548833,
+      "setup_time_human_readable": "6.282548833s",
       "note": "ExpandedRawFileIndex::query_multi_group aggregated 68222611 "
     },
     {
       "name": "ExpandedRawFileIndexCentroided",
       "context": "BatchAccess_narrow_rt",
-      "mean_duration_seconds": 0.005108526841836739,
-      "mean_duration_human_readable": "5.108526ms",
-      "setup_time_seconds": 87.226145542,
-      "setup_time_human_readable": "87.226145542s",
-      "note": "ExpandedRawFileIndexCentroided::query_multi_group aggregated 374244 "
+      "mean_duration_seconds": 0.004419905277533043,
+      "mean_duration_human_readable": "4.419905ms",
+      "setup_time_seconds": 55.125986125,
+      "setup_time_human_readable": "55.125986125s",
+      "note": "ExpandedRawFileIndexCentroided::query_multi_group aggregated 363057 "
     },
     {
       "name": "ExpandedRawFileIndexCentroided",
       "context": "BatchAccess_full_rt",
-      "mean_duration_seconds": 0.25770495825,
-      "mean_duration_human_readable": "257.704958ms",
-      "setup_time_seconds": 87.737051417,
-      "setup_time_human_readable": "87.737051417s",
-      "note": "ExpandedRawFileIndexCentroided::query_multi_group aggregated 47164889 "
+      "mean_duration_seconds": 0.26117429175,
+      "mean_duration_human_readable": "261.174291ms",
+      "setup_time_seconds": 54.706755208,
+      "setup_time_human_readable": "54.706755208s",
+      "note": "ExpandedRawFileIndexCentroided::query_multi_group aggregated 45634581 "
     },
     {
       "name": "TransposedQuadIndex",
       "context": "BatchAccess_narrow_rt",
-      "mean_duration_seconds": 0.008393515249999999,
-      "mean_duration_human_readable": "8.393515ms",
-      "setup_time_seconds": 60.55498175,
-      "setup_time_human_readable": "60.55498175s",
+      "mean_duration_seconds": 0.008861190592920353,
+      "mean_duration_human_readable": "8.86119ms",
+      "setup_time_seconds": 64.419395125,
+      "setup_time_human_readable": "64.419395125s",
       "note": "TransposedQuadIndex::query_multi_group aggregated 558586 "
     },
     {
       "name": "TransposedQuadIndex",
       "context": "BatchAccess_full_rt",
-      "mean_duration_seconds": 0.011671118220930232,
-      "mean_duration_human_readable": "11.671118ms",
-      "setup_time_seconds": 59.586185583,
-      "setup_time_human_readable": "59.586185583s",
+      "mean_duration_seconds": 0.012704890202531639,
+      "mean_duration_human_readable": "12.70489ms",
+      "setup_time_seconds": 64.248769625,
+      "setup_time_human_readable": "64.248769625s",
       "note": "TransposedQuadIndex::query_multi_group aggregated 66501531 "
     },
     {
       "name": "TransposedQuadIndexCentroided",
       "context": "BatchAccess_narrow_rt",
-      "mean_duration_seconds": 0.005674485870056497,
-      "mean_duration_human_readable": "5.674485ms",
-      "setup_time_seconds": 97.143069834,
-      "setup_time_human_readable": "97.143069834s",
-      "note": "TransposedQuadIndex::query_multi_group aggregated 368659 "
+      "mean_duration_seconds": 0.0037612689210526303,
+      "mean_duration_human_readable": "3.761268ms",
+      "setup_time_seconds": 63.369554334,
+      "setup_time_human_readable": "63.369554334s",
+      "note": "TransposedQuadIndex::query_multi_group aggregated 353901 "
     },
     {
       "name": "TransposedQuadIndexCentroided",
       "context": "BatchAccess_full_rt",
-      "mean_duration_seconds": 0.0065915490261437915,
-      "mean_duration_human_readable": "6.591549ms",
-      "setup_time_seconds": 95.924367458,
-      "setup_time_human_readable": "95.924367458s",
-      "note": "TransposedQuadIndex::query_multi_group aggregated 46025604 "
+      "mean_duration_seconds": 0.004413151973568282,
+      "mean_duration_human_readable": "4.413151ms",
+      "setup_time_seconds": 63.189314,
+      "setup_time_human_readable": "63.189314s",
+      "note": "TransposedQuadIndex::query_multi_group aggregated 44500583 "
     }
   ],
   "metadata": {
     "basename": "230510_PRTC_13_S1-B1_1_12817"
   },
-  "full_benchmark_time_seconds": 554.536639958
+  "full_benchmark_time_seconds": 434.436133792
 }

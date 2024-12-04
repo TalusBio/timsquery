@@ -304,7 +304,8 @@ pub fn execute_query(
 
     match (index, aggregator) {
         (PossibleIndex::TransposedQuadIndex, aggregator) => {
-            let index = QuadSplittedTransposedIndex::from_path(&(raw_file_path.clone())).unwrap();
+            let index = QuadSplittedTransposedIndex::from_path_centroided(&(raw_file_path.clone()))
+                .unwrap();
             match aggregator {
                 PossibleAggregator::RawPeakIntensityAggregator => {
                     let aggregator = RawPeakIntensityAggregator::new_with_elution_group;

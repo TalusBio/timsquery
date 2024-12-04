@@ -8,7 +8,7 @@ license = "Apache-2.0"
 timsrust = "=0.4.1"
 rayon = "1.5"
 nohash-hasher = "=0.2.0"
-indicatif = { version = "0.17.8", features = ["rayon"] }
+indicatif = { version = "0.17.9", features = ["rayon"] }
 
 clap = { version = "4.5.17", features = ["derive"], optional = true }
 serde = { version = "1.0.204", features = ["derive"] }
@@ -27,6 +27,7 @@ tracing-chrome = "0.7.2"
 # These are only used for benchmarks
 rand = { version = "0.8.5", optional = true }
 rand_chacha = { version = "0.3.1", optional = true }
+tabled = "0.17.0"
 
 
 [features]
@@ -42,6 +43,10 @@ required-features = ["build-binary"]
 name = "benchmark_indices"
 path = "benches/benchmark_indices.rs"
 required-features = ["bench"]
+
+[[bin]]
+name = "benchmark_centroiding"
+path = "benches/benchmark_centroiding.rs"
 
 [profile.release]
 opt-level = 3
