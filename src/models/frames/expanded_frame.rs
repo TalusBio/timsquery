@@ -21,6 +21,7 @@ use crate::utils::tolerance_ranges::{
     IncludedRange,
 };
 use rayon::prelude::*;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -324,11 +325,9 @@ pub fn par_expand_and_arrange_frames(
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CentroidingSettings {
-    ims_tol_pct: f64,
-    mz_tol_ppm: f64,
-    window_width: usize,
-    max_ms1_peaks: usize,
-    max_ms2_peaks: usize,
+    pub ims_tol_pct: f64,
+    pub mz_tol_ppm: f64,
+    pub window_width: usize,
 }
 
 impl Default for CentroidingSettings {
@@ -337,8 +336,6 @@ impl Default for CentroidingSettings {
             ims_tol_pct: 1.5,
             mz_tol_ppm: 15.0,
             window_width: 3,
-            max_ms1_peaks: 100_000,
-            max_ms2_peaks: 20_000,
         }
     }
 }
@@ -384,7 +381,7 @@ impl FrameProcessingConfig {
     }
 }
 
-fn warn_and_skip_badframes(
+pub fn warn_and_skip_badframes(
     frame_iter: impl ParallelIterator<Item = std::result::Result<Frame, FrameReaderError>>,
 ) -> impl ParallelIterator<Item = Frame> {
     frame_iter.filter_map(|x| {
@@ -433,7 +430,6 @@ pub fn par_read_and_expand_frames(
                 settings.ims_tol_pct,
                 settings.mz_tol_ppm,
                 settings.window_width,
-                settings.max_ms2_peaks,
                 &ims_converter.unwrap(),
                 &mz_converter.unwrap(),
             ),
@@ -448,7 +444,8 @@ pub fn par_read_and_expand_frames(
         .map(|x| ExpandedQuadSliceInfo::new(x))
         .collect();
 
-    println!("Slice info: {:?}", slice_infos);
+    let tbl = Table::new(slice_infos);
+    println!("Slice info: \n{}", tbl);
 
     info!("Processing MS1 frames");
     let ms1_iter = frame_reader.parallel_filter(|x| x.ms_level == MSLevel::MS1);
@@ -463,7 +460,6 @@ pub fn par_read_and_expand_frames(
             settings.ims_tol_pct,
             settings.mz_tol_ppm,
             settings.window_width,
-            settings.max_ms1_peaks,
             &ims_converter.unwrap(),
             &mz_converter.unwrap(),
         ),
@@ -475,11 +471,67 @@ pub fn par_read_and_expand_frames(
     Ok(all_expanded_frames)
 }
 
+use tabled::{
+    Table,
+    Tabled,
+};
+
 #[derive(Debug, Clone, Copy)]
 pub struct ExpandedQuadSliceInfo {
     pub quad_settings: Option<SingleQuadrupoleSetting>,
     pub cycle_time_seconds: f64,
     pub peak_width_seconds: Option<f64>,
+}
+
+impl Tabled for ExpandedQuadSliceInfo {
+    const LENGTH: usize = 7;
+
+    // Required methods
+    fn fields(&self) -> Vec<Cow<'_, str>> {
+        match self.quad_settings {
+            Some(qs) => {
+                let qr = qs.ranges;
+                let qi = qs.index;
+
+                let scan_ranges = format!("{:?}-{:?}", qr.scan_start, qr.scan_end);
+                let quad_ranges = format!("{:?}-{:?}", qr.isolation_low, qr.isolation_high);
+                vec![
+                    Cow::Owned(qi.major_index.to_string()),
+                    Cow::Owned(qi.sub_index.to_string()),
+                    Cow::Owned(quad_ranges),
+                    Cow::Owned(scan_ranges),
+                    Cow::Owned(qr.collision_energy.to_string()),
+                    Cow::Owned(self.cycle_time_seconds.to_string()),
+                    Cow::Owned(
+                        self.peak_width_seconds
+                            .as_ref()
+                            .map(|x| x.to_string())
+                            .unwrap_or("None".to_string()),
+                    ),
+                ]
+            }
+            None => vec![
+                Cow::Borrowed("None"),
+                Cow::Borrowed("None"),
+                Cow::Owned("None".to_string()),
+                Cow::Owned("None".to_string()),
+                Cow::Owned("None".to_string()),
+                Cow::Owned("None".to_string()),
+            ],
+        }
+    }
+
+    fn headers() -> Vec<Cow<'static, str>> {
+        vec![
+            Cow::Borrowed("Major index"),
+            Cow::Borrowed("Minor index"),
+            Cow::Borrowed("Quad ranges"),
+            Cow::Borrowed("Scan ranges"),
+            Cow::Borrowed("CE"),
+            Cow::Borrowed("Cycle time"),
+            Cow::Borrowed("Peak width"),
+        ]
+    }
 }
 
 impl ExpandedQuadSliceInfo {
@@ -682,7 +734,6 @@ pub fn par_expand_and_centroid_frames(
     ims_tol_pct: f64,
     mz_tol_ppm: f64,
     window_width: usize,
-    max_peaks: usize,
     ims_converter: &Scan2ImConverter,
     mz_converter: &Tof2MzConverter,
 ) -> HashMap<Option<SingleQuadrupoleSetting>, Vec<ExpandedFrameSlice<SortedState>>> {
@@ -700,7 +751,6 @@ pub fn par_expand_and_centroid_frames(
                     window_width,
                     ims_tol_pct,
                     mz_tol_ppm,
-                    max_peaks,
                     ims_converter,
                     mz_converter,
                 );
@@ -716,11 +766,10 @@ pub fn par_expand_and_centroid_frames(
     out
 }
 
-fn centroid_frameslice_window2(
+fn centroid_frameslice_window(
     frameslices: &[ExpandedFrameSlice<SortedState>],
     ims_tol_pct: f64,
     mz_tol_ppm: f64,
-    max_peaks: usize,
     ims_converter: &Scan2ImConverter,
     mz_converter: &Tof2MzConverter,
 ) -> ExpandedFrameSlice<SortedState> {
@@ -735,7 +784,6 @@ fn centroid_frameslice_window2(
     let ((tof_array, intensity_array), ims_array) = lazy_centroid_weighted_frame(
         &peak_refs,
         reference_index,
-        max_peaks,
         |tof| tof_tol_range(tof, mz_tol_ppm, mz_converter),
         |scan| scan_tol_range(scan, ims_tol_pct, ims_converter),
     );
@@ -762,7 +810,6 @@ pub fn par_lazy_centroid_frameslices(
     window_width: usize,
     ims_tol_pct: f64,
     mz_tol_ppm: f64,
-    max_peaks: usize,
     ims_converter: &Scan2ImConverter,
     mz_converter: &Tof2MzConverter,
 ) -> Vec<ExpandedFrameSlice<SortedState>> {
@@ -781,14 +828,7 @@ pub fn par_lazy_centroid_frameslices(
     assert!(frameslices.len() > window_width);
 
     let local_lambda = |fss: &[ExpandedFrameSlice<SortedState>]| {
-        centroid_frameslice_window2(
-            fss,
-            ims_tol_pct,
-            mz_tol_ppm,
-            max_peaks,
-            ims_converter,
-            mz_converter,
-        )
+        centroid_frameslice_window(fss, ims_tol_pct, mz_tol_ppm, ims_converter, mz_converter)
     };
 
     frameslices

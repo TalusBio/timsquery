@@ -13,6 +13,7 @@ use crate::models::elution_group::ElutionGroup;
 use crate::models::frames::raw_peak::RawPeak;
 use crate::models::queries::MsLevelContext;
 use crate::traits::aggregator::Aggregator;
+use crate::TimsqueryError;
 use serde::Serialize;
 use std::hash::Hash;
 
@@ -130,11 +131,26 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug>
     pub fn finalized_score(&self) -> Result<ApexScores> {
         let main_score = self.cross_ms2.as_slice();
         let main_score_rts = self.ms1_stats.retention_time_miliseconds.as_slice();
-        let apex_cross_ms2_index = main_score
-            .iter()
-            .enumerate()
-            .max_by(|x, y| x.1.partial_cmp(y.1).unwrap())
-            .unwrap();
+        let apex_cross_ms2_index = main_score.iter().enumerate().max_by(|x, y| {
+            let cmp = x.1.partial_cmp(y.1);
+            if cmp.is_none() {
+                panic!(
+                    "Main score is not comparable {:?} vs {:?} ... [{:?}]",
+                    x, y, main_score
+                );
+            }
+            cmp.unwrap()
+        });
+
+        let apex_cross_ms2_index = match apex_cross_ms2_index {
+            Some(x) => x,
+            None => {
+                return Err(TimsqueryError::Other(format!(
+                    "Insufficient data for cross score, main_score: {:?}",
+                    main_score
+                )));
+            }
+        };
 
         let apex_rt = main_score_rts[apex_cross_ms2_index.0];
 
@@ -218,12 +234,14 @@ impl<FH: Clone + Eq + Serialize + Hash + Send + Sync + std::fmt::Debug> Aggregat
             PartitionedCMGArrayStats::from(PartitionedCMGArrays::from(self.ms1_stats)),
             mz_converter,
             mobility_converter,
-        );
+        )
+        .unwrap();
         let ms2_stats = PartitionedCMGScoredStatsArrays::new(
             PartitionedCMGArrayStats::from(PartitionedCMGArrays::from(self.ms2_stats)),
             mz_converter,
             mobility_converter,
-        );
+        )
+        .unwrap();
 
         let cross_ms1 = ms2_stats.cross_scores(&ms1_stats).unwrap_or(vec![]);
         let cross_ms2 = ms1_stats.cross_scores(&ms2_stats).unwrap_or(vec![]);

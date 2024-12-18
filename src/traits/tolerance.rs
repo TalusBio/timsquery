@@ -10,10 +10,11 @@ pub enum MzToleramce {
     Ppm((f64, f64)),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum RtTolerance {
     Absolute((f32, f32)),
     Pct((f32, f32)),
+    #[default]
     None,
 }
 
@@ -33,6 +34,7 @@ pub enum QuadTolerance {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DefaultTolerance {
     pub ms: MzToleramce,
+    #[serde(default)]
     pub rt: RtTolerance,
     pub mobility: MobilityTolerance,
     pub quad: QuadTolerance,

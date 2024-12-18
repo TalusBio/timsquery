@@ -1,9 +1,5 @@
 use crate::sort_vecs_by_first;
-use tracing::{
-    error,
-    info,
-    warn,
-};
+use tracing::error;
 
 use super::tolerance_ranges::IncludedRange;
 
@@ -61,11 +57,116 @@ impl<'a> PeakArrayRefs<'a> {
     }
 }
 
-// TODO: Refactor this function
+struct Peak {
+    center_tof: u32,
+    center_ims: usize,
+    // max_intensity: u32,
+    agg_intensity: u32,
+    // point_count: usize,
+}
+struct OrderItem {
+    intensity: u32,
+    weight: u32,
+    tof: u32,
+    ims: usize,
+}
+
+fn find_gaussian_peaks(
+    items: &[OrderItem],
+    min_points: usize,
+    min_agg_intensity: u32,
+    tof_tol_range_fn: impl Fn(u32) -> IncludedRange<u32>,
+    ims_tol_range_fn: impl Fn(usize) -> IncludedRange<usize>,
+) -> Vec<Peak> {
+    let mut taken = vec![false; items.len()];
+    let mut taken_queue = Vec::new();
+    let mut peaks = Vec::new();
+    let mut i = 0;
+
+    while i < items.len() {
+        let current = &items[i];
+        if taken[i] {
+            i += 1;
+            continue;
+        }
+
+        // Fast pre-filtering: check if this point could be a peak center
+        // I could make a smarter version of this ... like to get the cumulative
+        // sum of intensities and then get the intensity of each window very quickly.
+        // if current.weight < min_apex_intensity {
+        //     i += 1;
+        //     continue;
+        // }
+
+        // Get tolerance ranges for current point
+        let tof_range = tof_tol_range_fn(current.tof);
+        let ims_range = ims_tol_range_fn(current.ims);
+
+        // Find all points within tolerance ranges
+        let st = tof_range.start();
+        let ep = tof_range.end();
+        let window_start = items[..i].partition_point(|item| item.tof < st);
+        let window_end = items[i..].partition_point(|item| item.tof < ep) + i;
+
+        // Count points and check intensity distribution
+        let mut point_count = 0;
+        let mut is_peak = true;
+        let max_weight = current.weight;
+        let mut agg_intensity = 0;
+
+        for j in window_start..window_end {
+            if taken[j] {
+                continue;
+            };
+            let point = &items[j];
+
+            if ims_range.contains(point.ims) {
+                taken_queue.push(j);
+                point_count += 1;
+                agg_intensity += point.intensity;
+
+                // Track maximum intensity
+                if point.weight > max_weight {
+                    is_peak = false; // Current point isn't the peak if we found higher intensity
+                    break;
+                }
+            }
+        }
+
+        // If this is a valid peak, record it
+        if is_peak && agg_intensity >= min_agg_intensity && point_count >= min_points {
+            peaks.push(Peak {
+                center_tof: current.tof,
+                center_ims: current.ims,
+                agg_intensity,
+            });
+            for j in taken_queue.iter() {
+                taken[*j] = true;
+            }
+            taken_queue.clear();
+        } else {
+            // If this wasn't a peak, jump to the maximum intensity point we found
+            // This optimization helps us avoid checking every point in dense regions
+            // NOTE: This optimization might make sense but in our data might skip
+            // peaks that are very close in tof but not in mobility.
+            //
+            // i = if max_intensity_idx > i {
+            //     max_intensity_idx
+            // } else {
+            //     i + 1
+            // };
+            i += 1;
+            taken_queue.clear();
+        }
+    }
+
+    peaks
+}
+
+// TODO: Instrument to add/return aggregation metrics/stats
 pub fn lazy_centroid_weighted_frame<'a>(
     peak_refs: &'a [PeakArrayRefs<'a>],
     reference_index: usize,
-    max_peaks: usize,
     tof_tol_range_fn: impl Fn(u32) -> IncludedRange<u32>,
     ims_tol_range_fn: impl Fn(usize) -> IncludedRange<usize>,
 ) -> CentroidedVecs {
@@ -79,151 +180,38 @@ pub fn lazy_centroid_weighted_frame<'a>(
         error!("No peaks in reference array when centroiding");
         return ((Vec::new(), Vec::new()), Vec::new());
     }
-    let initial_tot_intensity = ref_arrays
-        .intensity_array
-        .iter()
-        .map(|x| *x as u64)
-        .sum::<u64>();
-
-    let mut touched = vec![false; tot_size];
-    let mut global_num_touched = 0;
-    let mut num_added = 0;
-
-    // We will be iterating in decreasing order of intensity
-    // Pre-calculate indices and intensities for sorting
-    struct OrderItem {
-        global_idx: usize,
-        major_idx: usize,
-        minor_idx: usize,
-        intensity: u32,
-    }
 
     let mut order: Vec<OrderItem> = Vec::with_capacity(tot_size);
-    let mut offset = 0;
     for (major_idx, peak_ref) in peak_refs.iter().enumerate() {
         for (minor_idx, &intensity) in peak_ref.intensity_array.iter().enumerate() {
+            let tof = peak_ref.tof_array[minor_idx];
+            let ims = peak_ref.ims_array[minor_idx];
+            let weight = if major_idx == reference_index {
+                peak_ref.intensity_array[minor_idx]
+            } else {
+                0
+            };
             order.push(OrderItem {
-                global_idx: offset + minor_idx,
-                major_idx,
-                minor_idx,
-                intensity,
+                tof,
+                intensity: weight,
+                ims,
+                weight: intensity,
             });
         }
-        offset += peak_ref.len();
     }
 
     // Sort by intensity
-    order.sort_unstable_by(|a, b| b.intensity.cmp(&a.intensity));
-    assert!(order[0].intensity > order[tot_size - 1].intensity);
+    order.sort_unstable_by(|a, b| a.tof.cmp(&b.tof));
+    assert!(order[tot_size - 1].tof > order[0].tof);
 
-    let capacity = max_peaks.min(arr_len);
-    let mut agg_tof = Vec::with_capacity(capacity);
-    let mut agg_intensity = Vec::with_capacity(capacity);
-    let mut agg_ims = Vec::with_capacity(capacity);
+    let outpeaks = find_gaussian_peaks(&order, 1, 100, &tof_tol_range_fn, ims_tol_range_fn);
 
-    for item in order {
-        let major_idx = item.major_idx;
-        let minor_idx = item.minor_idx;
-        let this_intensity = item.intensity as u64;
+    let ((agg_intensity, agg_tof), agg_ims) = outpeaks
+        .into_iter()
+        .map(|x| ((x.agg_intensity, x.center_tof), x.center_ims))
+        .unzip();
 
-        if touched[item.global_idx] {
-            continue;
-        }
-
-        let tof = peak_refs[major_idx].tof_array[minor_idx];
-        let ims = peak_refs[major_idx].ims_array[minor_idx];
-        let tof_range = tof_tol_range_fn(tof);
-        let ims_range = ims_tol_range_fn(ims);
-
-        let mut curr_intensity = 0u64;
-        let mut curr_weight = 0u64;
-        // let mut curr_agg_tof = 0u64;
-        // let mut curr_agg_ims = 0u64;
-
-        // This is added to the index within the loop
-        // To get the touched status of the peaks.
-        let mut local_offset_touched = 0;
-        for (ii, local_peak_refs) in peak_refs.iter().enumerate() {
-            let ss_start = local_peak_refs
-                .tof_array
-                .partition_point(|x| *x < tof_range.start());
-            let ss_end = local_peak_refs
-                .tof_array
-                .partition_point(|x| *x <= tof_range.end());
-            for i in ss_start..ss_end {
-                let ti = local_offset_touched + i;
-                if !touched[ti] && ims_range.contains(local_peak_refs.ims_array[i]) {
-                    // Peaks are always weighted but not always intense!
-                    let local_intensity = local_peak_refs.intensity_array[i] as u64;
-                    if ii == reference_index {
-                        curr_intensity += local_intensity;
-                        global_num_touched += 1;
-                    }
-                    // curr_agg_tof += local_peak_refs.tof_array[i] as u64 * local_intensity;
-                    // curr_agg_ims += local_peak_refs.ims_array[i] as u64 * local_intensity;
-                    curr_weight += local_intensity;
-                    touched[ti] = true;
-                }
-            }
-            local_offset_touched += local_peak_refs.len();
-        }
-
-        // This means that at least 2 peaks need to be aggregated.
-        if curr_weight > this_intensity && curr_intensity >= this_intensity {
-            agg_intensity.push(u32::try_from(curr_intensity).expect("Expected to fit in u32"));
-            // let calc_tof = (curr_agg_tof / curr_weight) as u32;
-            // let calc_ims = (curr_agg_ims / curr_weight) as usize;
-            let calc_tof = tof;
-            let calc_ims = ims;
-            debug_assert!(tof_range.contains(calc_tof));
-            debug_assert!(ims_range.contains(calc_ims));
-            agg_tof.push(calc_tof);
-            agg_ims.push(calc_ims);
-            num_added += 1;
-            if num_added == max_peaks {
-                break;
-            }
-        }
-
-        if global_num_touched == arr_len {
-            break;
-        }
-    }
-
-    let out = sort_n_check(agg_intensity, agg_tof, agg_ims);
-
-    // TODO:Make everything below this a separate function and accumulate it.
-    let tot_final_intensity = out.0.1.iter().map(|x| *x as u64).sum::<u64>();
-    let inten_ratio = tot_final_intensity as f64 / initial_tot_intensity as f64;
-    assert!(initial_tot_intensity >= tot_final_intensity);
-
-    let output_len = out.0.0.len();
-    let compression_ratio = output_len as f64 / arr_len as f64;
-    assert!(num_added == output_len);
-
-    // 80% of the intensity being preserved sounds like a good cutoff.
-    if output_len == max_peaks && inten_ratio < 0.80 {
-        info!(
-            "Frame trimmed to max peaks ({}), preserved intensity {}/{} intensity ratio: {} compression_ratio: {} if this is not acceptable consider increasing the parameter.",
-            max_peaks, tot_final_intensity, initial_tot_intensity, inten_ratio, compression_ratio,
-        );
-    }
-
-    if arr_len > 5000 && (output_len == arr_len) {
-        warn!("Output length is the same as input length, this is probably a bug");
-        warn!("Intensity ratio {:?}", inten_ratio);
-        warn!("initial_tot_intensity: {:?}", initial_tot_intensity);
-        warn!("tot_final_intensity: {:?}", tot_final_intensity);
-        warn!(
-            "First tof {} -> Range {:?}",
-            out.0.0[0],
-            tof_tol_range_fn(out.0.0[0])
-        );
-        panic!();
-        // warn!("agg_intensity: {:?}", out.0 .0);
-    }
-
-    out
+    sort_n_check(agg_intensity, agg_tof, agg_ims)
 }
 
 #[cfg(test)]
@@ -268,8 +256,7 @@ mod tests {
 
         let result = lazy_centroid_weighted_frame(
             &peak_refs,
-            0,  // reference_index
-            10, // max_peaks
+            0, // reference_index
             test_tof_tolerance,
             test_ims_tolerance,
         );
@@ -290,33 +277,35 @@ mod tests {
         // Check that the peaks were properly merged and weighted
         assert!(tof_array[0] >= 100 && tof_array[0] <= 101);
         assert_eq!(ims_array[0], 1);
-        assert!(intensity_array[0] == 3000); // Should be sum of intensities
-        assert!(intensity_array[1] == 1100); // Should be sum of intensities
+        assert_eq!(intensity_array[0], 3000); // Should be sum of intensities
+        assert_eq!(intensity_array[1], 1100); // Should be sum of intensities
     }
 
-    #[test]
-    fn test_max_peaks_limit() {
-        // Test that the function respects the max_peaks parameter
-        let peak_refs = vec![
-            create_peak_refs(&[100, 200, 300], &[1, 2, 3], &[1000, 900, 800]),
-            create_peak_refs(&[101, 201, 301], &[1, 2, 3], &[950, 850, 750]),
-        ];
+    // // NOTE: Current (experimental) implementation doe not have limit
+    //
+    // #[test]
+    // fn test_max_peaks_limit() {
+    //     // Test that the function respects the max_peaks parameter
+    //     let peak_refs = vec![
+    //         create_peak_refs(&[100, 200, 300], &[1, 2, 3], &[1000, 900, 800]),
+    //         create_peak_refs(&[101, 201, 301], &[1, 2, 3], &[950, 850, 750]),
+    //     ];
 
-        let result = lazy_centroid_weighted_frame(
-            &peak_refs,
-            0,
-            2, // max_peaks set to 2
-            test_tof_tolerance,
-            test_ims_tolerance,
-        );
+    //     let result = lazy_centroid_weighted_frame(
+    //         &peak_refs,
+    //         0,
+    //         2, // max_peaks set to 2
+    //         test_tof_tolerance,
+    //         test_ims_tolerance,
+    //     );
 
-        let ((tof_array, _), _) = result;
-        assert_eq!(
-            tof_array.len(),
-            2,
-            "Should only return max_peaks number of peaks"
-        );
-    }
+    //     let ((tof_array, _), _) = result;
+    //     assert_eq!(
+    //         tof_array.len(),
+    //         2,
+    //         "Should only return max_peaks number of peaks"
+    //     );
+    // }
 
     #[test]
     fn test_empty_input() {
@@ -327,7 +316,7 @@ mod tests {
         ];
 
         let result =
-            lazy_centroid_weighted_frame(&peak_refs, 0, 10, test_tof_tolerance, test_ims_tolerance);
+            lazy_centroid_weighted_frame(&peak_refs, 0, test_tof_tolerance, test_ims_tolerance);
 
         let ((tof_array, intensity_array), ims_array) = result;
         assert_eq!(tof_array.len(), 0);
@@ -352,7 +341,7 @@ mod tests {
         ];
 
         let result =
-            lazy_centroid_weighted_frame(&peak_refs, 0, 10, test_tof_tolerance, test_ims_tolerance);
+            lazy_centroid_weighted_frame(&peak_refs, 0, test_tof_tolerance, test_ims_tolerance);
 
         let ((tof_array, _), ims_array) = result;
 
@@ -373,7 +362,6 @@ mod tests {
         lazy_centroid_weighted_frame(
             &peak_refs,
             2, // Invalid index
-            10,
             test_tof_tolerance,
             test_ims_tolerance,
         );
