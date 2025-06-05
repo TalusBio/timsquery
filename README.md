@@ -1,6 +1,8 @@
 
 # Timsquery
 
+> Timsquery has been moved as a crate in the https://github.com/TalusBio/timsbuktoolkit workspace!
+
 ## Where are we in the life cycle?
 
 - The library is in a very early stage of development.
